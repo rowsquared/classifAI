@@ -1,0 +1,367 @@
+"use client"
+import { useState, useEffect, useLayoutEffect } from 'react'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { useSession, signOut } from 'next-auth/react'
+import Image from 'next/image'
+
+// Dynamic sizing based on logo width (w)
+// Logo width/height: w (20px)
+// Collapsed sidebar: 3w (60px)
+// Icon size: 1w (20px)
+// Spacing from edges: 1w (20px)
+// Page header height: 3w (60px)
+
+const LOGO_SIZE = 22 // w in pixels
+const SIDEBAR_COLLAPSED_WIDTH = LOGO_SIZE * 3 // 3w = 60px
+const ICON_SIZE = LOGO_SIZE * 1 // 1w = 20px
+const SPACING = LOGO_SIZE * 1 // 1w = 20px
+const HEADER_HEIGHT = LOGO_SIZE * 3 // 3w = 60px
+const FOOTER_LOGO_HEIGHT = 48 // Fixed height for R2 footer logo
+
+export default function Sidebar() {
+  const [collapsed, setCollapsed] = useState(false)
+  const [isHydrated, setIsHydrated] = useState(false)
+  const [logoHovered, setLogoHovered] = useState(false)
+  const [showLogoutMenu, setShowLogoutMenu] = useState(false)
+  const pathname = usePathname()
+  const { data: session } = useSession()
+
+  // Initialize from localStorage synchronously before paint (useLayoutEffect)
+  useLayoutEffect(() => {
+    const saved = localStorage.getItem('sidebar-collapsed')
+    if (saved !== null) {
+      setCollapsed(JSON.parse(saved))
+    }
+    setIsHydrated(true)
+  }, [])
+
+  // Close logout menu when clicking outside
+  useEffect(() => {
+    if (!showLogoutMenu) return
+
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement
+      if (!target.closest('.user-profile-section')) {
+        setShowLogoutMenu(false)
+      }
+    }
+
+    // Use setTimeout to avoid closing immediately when opening
+    setTimeout(() => {
+      document.addEventListener('click', handleClickOutside)
+    }, 0)
+    
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [showLogoutMenu])
+
+  // Hide sidebar on login and reset-password pages (after all hooks)
+  if (pathname === '/login' || pathname === '/reset-password') {
+    return null
+  }
+
+  const toggleCollapse = () => {
+    const newState = !collapsed
+    setCollapsed(newState)
+    localStorage.setItem('sidebar-collapsed', JSON.stringify(newState))
+  }
+
+  const handleLogout = async () => {
+    await signOut({ callbackUrl: '/login' })
+  }
+
+  const navItems = [
+    { 
+      icon: (
+        <svg className="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <circle cx="5" cy="6" r="1.5" fill="currentColor" />
+          <circle cx="5" cy="12" r="1.5" fill="currentColor" />
+          <circle cx="5" cy="18" r="1.5" fill="currentColor" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 6h11M9 12h11M9 18h11" />
+        </svg>
+      ),
+      label: 'Queue', 
+      href: '/queue',
+      roles: ['admin', 'supervisor', 'labeller']
+    },
+    { 
+      icon: (
+        <svg className="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+      ),
+      label: 'Progress', 
+      href: '/progress',
+      roles: ['admin', 'supervisor', 'labeller']
+    },
+    { 
+      icon: (
+        <svg className="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      ),
+      label: 'Taxonomy', 
+      href: '/admin/taxonomy',
+      roles: ['admin', 'supervisor']
+    },
+    { 
+      icon: (
+        <svg className="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+        </svg>
+      ),
+      label: 'Sentences', 
+      href: '/admin/sentences',
+      roles: ['admin', 'supervisor']
+    },
+    { 
+      icon: (
+        <svg className="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      ),
+      label: 'Export', 
+      href: '/admin/export',
+      roles: ['admin', 'supervisor']
+    },
+    { 
+      icon: (
+        <svg className="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+        </svg>
+      ),
+      label: 'Team', 
+      href: '/admin/team',
+      roles: ['admin']
+    },
+  ]
+
+  // Get user from session
+  const user = session?.user ? {
+    name: session.user.name || 'User',
+    email: session.user.email || '',
+    role: session.user.role || 'labeller',
+    initials: (session.user.name || 'U').split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
+  } : null
+
+  // TODO: Make this configurable from admin page
+  const surveyTitle = 'r2 Labelling' // Can be set to e.g., 'HIES 2015'
+
+  const visibleNavItems = user ? navItems.filter(item => item.roles.includes(user.role)) : []
+
+  const isActive = (href: string) => {
+    if (href === '/queue') {
+      return pathname === '/queue' || pathname.startsWith('/queue/')
+    }
+    // Exact match for admin sub-pages
+    if (href.startsWith('/admin/')) {
+      return pathname === href
+    }
+    return pathname.startsWith(href)
+  }
+
+  return (
+    <aside 
+      className="bg-gray-50 border-r border-gray-200 flex flex-col"
+      style={{ 
+        width: collapsed ? `${SIDEBAR_COLLAPSED_WIDTH}px` : '256px',
+        transition: isHydrated ? 'width 300ms ease-in-out' : 'none'
+      }}
+    >
+      {/* Logo Section - Height: 3w (90px) */}
+      <div 
+        className="flex items-center border-b border-gray-200 relative"
+        style={{ 
+          height: `${HEADER_HEIGHT}px`,
+          paddingLeft: `${SPACING}px`,
+          paddingRight: collapsed ? `${SPACING}px` : '12px'
+        }}
+      >
+        {/* Logo and Title Container */}
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          {/* Logo with hover expand button for collapsed state */}
+          <div
+            className="relative flex-shrink-0 cursor-pointer"
+            style={{ width: `${LOGO_SIZE}px`, height: `${LOGO_SIZE}px` }}
+            onMouseEnter={() => collapsed && setLogoHovered(true)}
+            onMouseLeave={() => setLogoHovered(false)}
+            onClick={() => collapsed && toggleCollapse()}
+          >
+            {collapsed && logoHovered ? (
+              // Show expand button on hover when collapsed
+              <div className="w-full h-full flex items-center justify-center bg-gray-200 rounded hover:bg-gray-300 transition-colors">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                </svg>
+              </div>
+            ) : (
+              // Show logo
+              <Image
+                src="/logo.svg"
+                alt="Logo"
+                width={LOGO_SIZE}
+                height={LOGO_SIZE}
+                className="w-full h-full"
+              />
+            )}
+          </div>
+          
+          {/* Survey Title - Fades in/out when expanded/collapsed */}
+          <h1 
+            className="text-sm font-semibold text-gray-900 truncate overflow-hidden"
+            style={{ 
+              opacity: collapsed ? 0 : 1,
+              width: collapsed ? 0 : 'auto',
+              transition: isHydrated ? 'opacity 300ms ease-in-out' : 'none'
+            }}
+          >
+            {surveyTitle}
+          </h1>
+        </div>
+        
+        {/* Collapse Button - Only visible when expanded */}
+        {!collapsed && (
+          <button
+            onClick={toggleCollapse}
+            className="p-1.5 hover:bg-gray-200 rounded transition-colors flex-shrink-0"
+            title="Collapse sidebar"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {/* Navigation Items */}
+      <nav className="flex-1 py-4">
+        {visibleNavItems.map(item => {
+          const active = isActive(item.href)
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`
+                flex items-center gap-4 py-3 transition-colors relative
+                ${active ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700 hover:bg-gray-100'}
+              `}
+              style={{
+                paddingLeft: `${SPACING}px`,
+                paddingRight: `${SPACING}px`
+              }}
+              title={collapsed ? item.label : undefined}
+            >
+              <div 
+                className="flex-shrink-0"
+                style={{ width: `${ICON_SIZE}px`, height: `${ICON_SIZE}px` }}
+              >
+                {item.icon}
+              </div>
+              <span 
+                className="text-sm font-medium whitespace-nowrap overflow-hidden"
+                style={{ 
+                  opacity: collapsed ? 0 : 1,
+                  width: collapsed ? 0 : 'auto',
+                  transition: isHydrated ? 'opacity 300ms ease-in-out' : 'none'
+                }}
+              >
+                {item.label}
+              </span>
+            </Link>
+          )
+        })}
+      </nav>
+
+      {/* Bottom Section - User, Footer Logo */}
+      <div>
+        {/* User Profile - Fixed position from bottom */}
+        {user && (
+          <div className="relative user-profile-section">
+            <button 
+              onClick={() => setShowLogoutMenu(!showLogoutMenu)}
+              className="flex items-center gap-3 w-full hover:bg-gray-100 transition-colors"
+              style={{
+                paddingTop: '12px',
+                paddingBottom: '12px',
+                paddingLeft: `${SPACING}px`,
+                paddingRight: `${SPACING}px`
+              }}
+            >
+              <div 
+                className="bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0"
+                style={{ width: `${ICON_SIZE}px`, height: `${ICON_SIZE}px` }}
+              >
+                {user.initials}
+              </div>
+              <div 
+                className="flex-1 min-w-0 overflow-hidden text-left"
+                style={{ 
+                  opacity: collapsed ? 0 : 1,
+                  width: collapsed ? 0 : 'auto',
+                  transition: isHydrated ? 'opacity 300ms ease-in-out' : 'none'
+                }}
+              >
+                <div className="text-sm font-medium text-gray-900 truncate">{user.name}</div>
+              </div>
+            </button>
+
+            {/* Logout Menu */}
+            {showLogoutMenu && (
+              <div 
+                className="absolute bottom-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden"
+                style={{
+                  left: collapsed ? `${SPACING}px` : `${SPACING}px`,
+                  right: collapsed ? 'auto' : `${SPACING}px`,
+                  marginBottom: '4px',
+                  minWidth: collapsed ? '120px' : 'auto'
+                }}
+              >
+                <button
+                  onClick={handleLogout}
+                  className="w-full px-4 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2 text-gray-700 whitespace-nowrap"
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* R2 Footer Logo - Always takes same space to prevent jump */}
+        <div 
+          className="flex items-center justify-center"
+          style={{ 
+            height: `${FOOTER_LOGO_HEIGHT}px`
+          }}
+        >
+          <a 
+            href="https://rowsquared.com" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="block hover:opacity-100"
+            style={{ 
+              width: '66%',
+              opacity: collapsed ? 0 : 0.6,
+              pointerEvents: collapsed ? 'none' : 'auto',
+              transition: isHydrated ? 'opacity 300ms ease-in-out' : 'none'
+            }}
+          >
+            <Image
+              src="/r2-footer.svg"
+              alt="Made with ❤️ by R2"
+              width={120}
+              height={20}
+              className="w-full h-auto"
+            />
+          </a>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+// Export constants for use in other components
+export { HEADER_HEIGHT, LOGO_SIZE, SIDEBAR_COLLAPSED_WIDTH }

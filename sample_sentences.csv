@@ -1,0 +1,7 @@
+id,field_job_title,field_job_description,field_company,support_years_experience,support_industry
+JOB001,"Software Engineer","Develop and maintain web applications using React, Node.js, and PostgreSQL. Collaborate with cross-functional teams to deliver high-quality software solutions.","TechCorp Inc.",5,"Technology"
+JOB002,"Data Scientist","Analyze large datasets to extract insights and build machine learning models. Work with stakeholders to identify business opportunities and drive data-driven decisions.","DataFlow Analytics",3,"Finance"
+JOB003,"Product Manager","Define product roadmap and strategy. Work closely with engineering and design teams to deliver innovative features that meet customer needs.","StartupXYZ",7,"SaaS"
+JOB004,"UX Designer","Create user-centered design solutions for web and mobile applications. Conduct user research, create wireframes, and iterate on prototypes based on feedback.","DesignHub",4,"Design Services"
+JOB005,"DevOps Engineer","Manage cloud infrastructure and CI/CD pipelines. Automate deployment processes and ensure high availability of production systems.","CloudTech Solutions",6,"Cloud Computing"
+

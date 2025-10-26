@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --font-family-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+:root {
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(240 10% 3.9%);
+  --muted: hsl(240 4.8% 95.9%);
+  --muted-foreground: hsl(240 3.8% 46.1%);
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Checkbox styling - override browser default blue to indigo */
+input[type="checkbox"] {
+  accent-color: #4f46e5; /* indigo-600 */
+  cursor: pointer;
+}
+
+input[type="checkbox"]:focus {
+  outline: 2px solid #6366f1; /* indigo-500 */
+  outline-offset: 2px;
+}

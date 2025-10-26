@@ -1,0 +1,220 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  supervisor
+  labeller
+}
+
+enum SentenceStatus {
+  pending
+  submitted
+  skipped
+  escalated
+}
+
+enum AnnotationSource {
+  user
+  ai
+}
+
+model User {
+  id                String   @id @default(cuid())
+  username          String   @unique
+  email             String   @unique
+  name              String?
+  password          String   // Hashed password
+  role              Role
+  supervisorId      String?
+  supervisor        User?    @relation("SupervisorToLabellers", fields: [supervisorId], references: [id], onDelete: SetNull)
+  labellers         User[]   @relation("SupervisorToLabellers")
+  mustResetPassword Boolean  @default(true) // Force password reset on first login
+  lastLogin         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  annotations         SentenceAnnotation[]
+  comments            Comment[]
+  auditLogs           AuditLog[]
+  imports             SentenceImport[]
+  editedSentences     Sentence[] @relation("LastEditor")
+  assignedSentences   SentenceAssignment[]
+}
+
+model Taxonomy {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  displayName  String
+  description  String?
+  levelNames   Json?    // { "1": "Major Group", "2": "Sub-major", ... }
+  maxDepth     Int      @default(5)
+  isActive     Boolean  @default(true)
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  nodes        TaxonomyNode[]
+  synonyms     TaxonomySynonym[]
+  annotations  SentenceAnnotation[]
+  settings     TaxonomySetting?
+}
+
+model TaxonomySetting {
+  id                  String   @id @default(cuid())
+  taxonomyId          String   @unique
+  autoSelectThreshold Float?
+  taxonomy            Taxonomy @relation(fields: [taxonomyId], references: [id])
+}
+
+model TaxonomyNode {
+  code         Int
+  id           String  @id @default(cuid())
+  taxonomyId   String
+  label        String
+  definition   String?
+  parentCode   Int?
+  level        Int
+  path         String?
+  isLeaf       Boolean?
+
+  taxonomy     Taxonomy @relation(fields: [taxonomyId], references: [id])
+  synonyms     TaxonomySynonym[]
+
+  @@unique([taxonomyId, code])
+  @@index([taxonomyId, level])
+  @@index([taxonomyId, parentCode])
+}
+
+model TaxonomySynonym {
+  id          String   @id @default(cuid())
+  taxonomyId  String
+  nodeId      String
+  synonym     String
+
+  taxonomy    Taxonomy @relation(fields: [taxonomyId], references: [id])
+  node        TaxonomyNode @relation(fields: [nodeId], references: [id])
+
+  @@index([taxonomyId, nodeId])
+}
+
+model SentenceImport {
+  id            String   @id @default(cuid())
+  fileName      String
+  uploadedAt    DateTime @default(now())
+  uploadedById  String?
+  totalRows     Int
+  
+  uploadedBy    User?      @relation(fields: [uploadedById], references: [id])
+  sentences     Sentence[]
+  
+  @@index([uploadedAt])
+}
+
+model SentenceAssignment {
+  id          String   @id @default(cuid())
+  sentenceId  String
+  userId      String
+  assignedAt  DateTime @default(now())
+  assignedBy  String?
+
+  sentence    Sentence @relation(fields: [sentenceId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sentenceId, userId])
+  @@index([userId])
+  @@index([sentenceId])
+}
+
+model Sentence {
+  id             String   @id @default(cuid()) // User-provided or auto-generated
+  importId       String
+  importOrder    Int      // Order within the import file (row number)
+  
+  // Field columns (what gets labeled) - max 5
+  field1         String   // Required: first field_ column from CSV
+  field2         String?
+  field3         String?
+  field4         String?
+  field5         String?
+  
+  // Support columns (context/metadata) - max 5
+  support1       String?
+  support2       String?
+  support3       String?
+  support4       String?
+  support5       String?
+  
+  // Field name mappings for UI display
+  fieldMapping   Json     // { "1": "job_title", "2": "job_description", ... }
+  supportMapping Json?    // { "1": "years_experience", "2": "industry", ... }
+  
+  flagged        Boolean          @default(false)
+  status         SentenceStatus   @default(pending)
+  lastEditorId   String?
+  lastEditedAt   DateTime?
+  createdAt      DateTime         @default(now())
+  
+  import         SentenceImport       @relation(fields: [importId], references: [id], onDelete: Cascade)
+  lastEditor     User?                @relation("LastEditor", fields: [lastEditorId], references: [id])
+  annotations    SentenceAnnotation[]
+  comments       Comment[]
+  assignments    SentenceAssignment[]
+  
+  @@index([importId])
+  @@index([status])
+  @@index([field1])
+  @@index([importId, importOrder])
+}
+
+
+model SentenceAnnotation {
+  id                String    @id @default(cuid())
+  sentenceId        String
+  taxonomyId        String
+  level             Int
+  nodeCode          Int       // -99 = unknown
+  source            AnnotationSource
+  createdById       String?
+  labelingStartedAt DateTime? // When labeling session started
+  createdAt         DateTime  @default(now())
+
+  sentence     Sentence @relation(fields: [sentenceId], references: [id])
+  taxonomy     Taxonomy @relation(fields: [taxonomyId], references: [id])
+  createdBy    User?    @relation(fields: [createdById], references: [id])
+
+  @@index([sentenceId, taxonomyId, level])
+  @@index([nodeCode])
+  @@index([createdById, createdAt])
+}
+
+model Comment {
+  id          String   @id @default(cuid())
+  sentenceId  String
+  authorId    String
+  body        String
+  createdAt   DateTime @default(now())
+
+  sentence    Sentence @relation(fields: [sentenceId], references: [id])
+  author      User     @relation(fields: [authorId], references: [id])
+
+  @@index([sentenceId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  payload    Json?
+  createdAt  DateTime @default(now())
+
+  actor      User?    @relation(fields: [actorId], references: [id])
+}

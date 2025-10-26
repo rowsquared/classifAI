@@ -1,0 +1,272 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
+import { z } from 'zod'
+import { parse } from 'csv-parse/sync'
+
+const searchParamsSchema = z.object({ 
+  dryRun: z.boolean().default(true) 
+})
+
+const BATCH_SIZE = 1000
+const MAX_FIELD_COLUMNS = 5
+const MAX_SUPPORT_COLUMNS = 5
+
+export async function POST(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const dryRunParam = searchParams.get('dryRun')
+    // Convert string 'false' to boolean false, anything else defaults to true
+    const dryRun = dryRunParam === 'false' ? false : true
+    const sp = { dryRun }
+
+    // Get the file from FormData
+    const formData = await req.formData()
+    const file = formData.get('file') as File
+    
+    if (!file) {
+      return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+    }
+
+    const fileName = file.name
+    const csvText = await file.text()
+    
+    // Parse CSV
+    let records: any[]
+    try {
+      records = parse(csvText, { 
+        columns: true, 
+        skip_empty_lines: true, 
+        bom: true,
+        trim: true
+      })
+    } catch (e: any) {
+      return NextResponse.json({ 
+        error: 'Failed to parse CSV', 
+        details: e.message 
+      }, { status: 400 })
+    }
+
+    if (records.length === 0) {
+      return NextResponse.json({ 
+        error: 'CSV file is empty' 
+      }, { status: 400 })
+    }
+
+    // Extract and validate headers
+    const headers = Object.keys(records[0])
+    const hasIdColumn = headers.includes('id')
+    
+    const fieldColumns = headers
+      .filter(h => h.startsWith('field_'))
+    
+    const supportColumns = headers
+      .filter(h => h.startsWith('support_'))
+    
+    const invalidColumns = headers.filter(h => 
+      h !== 'id' && 
+      !h.startsWith('field_') && 
+      !h.startsWith('support_')
+    )
+
+    // Validation
+    const errors: string[] = []
+
+    if (invalidColumns.length > 0) {
+      errors.push(`Invalid columns found: ${invalidColumns.join(', ')}. Only 'id', 'field_*', and 'support_*' are allowed.`)
+    }
+
+    if (fieldColumns.length === 0) {
+      errors.push('CSV must contain at least one field_* column')
+    }
+
+    if (fieldColumns.length > MAX_FIELD_COLUMNS) {
+      errors.push(`Too many field columns (${fieldColumns.length}). Maximum is ${MAX_FIELD_COLUMNS}`)
+    }
+
+    if (supportColumns.length > MAX_SUPPORT_COLUMNS) {
+      errors.push(`Too many support columns (${supportColumns.length}). Maximum is ${MAX_SUPPORT_COLUMNS}`)
+    }
+
+    if (errors.length > 0) {
+      return NextResponse.json({ 
+        ok: false, 
+        errors 
+      }, { status: 400 })
+    }
+
+    // Build field and support mappings (preserve CSV order)
+    const fieldMapping: Record<string, string> = {}
+    fieldColumns.forEach((col, idx) => {
+      const fieldName = col.substring(6) // Remove 'field_' prefix
+      fieldMapping[String(idx + 1)] = fieldName
+    })
+
+    const supportMapping: Record<string, string> = {}
+    supportColumns.forEach((col, idx) => {
+      const fieldName = col.substring(8) // Remove 'support_' prefix
+      supportMapping[String(idx + 1)] = fieldName
+    })
+
+    // Process records
+    const sentences: any[] = []
+    const providedIds = new Set<string>()
+    const rowErrors: { row: number; message: string }[] = []
+
+    for (let idx = 0; idx < records.length; idx++) {
+      const record = records[idx]
+      const rowNum = idx + 2 // +2 for header and 0-index
+
+      // Handle ID
+      let sentenceId: string
+      if (hasIdColumn) {
+        if (!record.id || record.id.trim() === '') {
+          rowErrors.push({ row: rowNum, message: 'Empty ID value' })
+          continue
+        }
+        sentenceId = record.id.trim()
+        
+        if (providedIds.has(sentenceId)) {
+          rowErrors.push({ row: rowNum, message: `Duplicate ID: ${sentenceId}` })
+          continue
+        }
+        providedIds.add(sentenceId)
+      } else {
+        // Will be generated as cuid() during insert
+        sentenceId = '' // Placeholder
+      }
+
+      // Extract field values
+      const field1 = fieldColumns[0] ? record[fieldColumns[0]]?.trim() : null
+      if (!field1) {
+        rowErrors.push({ row: rowNum, message: 'First field column is required and cannot be empty' })
+        continue
+      }
+
+      const field2 = fieldColumns[1] ? record[fieldColumns[1]]?.trim() || null : null
+      const field3 = fieldColumns[2] ? record[fieldColumns[2]]?.trim() || null : null
+      const field4 = fieldColumns[3] ? record[fieldColumns[3]]?.trim() || null : null
+      const field5 = fieldColumns[4] ? record[fieldColumns[4]]?.trim() || null : null
+
+      // Extract support values
+      const support1 = supportColumns[0] ? record[supportColumns[0]]?.trim() || null : null
+      const support2 = supportColumns[1] ? record[supportColumns[1]]?.trim() || null : null
+      const support3 = supportColumns[2] ? record[supportColumns[2]]?.trim() || null : null
+      const support4 = supportColumns[3] ? record[supportColumns[3]]?.trim() || null : null
+      const support5 = supportColumns[4] ? record[supportColumns[4]]?.trim() || null : null
+
+      sentences.push({
+        id: sentenceId,
+        importOrder: rowNum, // Track row number from CSV for stable sorting
+        field1,
+        field2,
+        field3,
+        field4,
+        field5,
+        support1,
+        support2,
+        support3,
+        support4,
+        support5,
+        fieldMapping,
+        supportMapping: Object.keys(supportMapping).length > 0 ? supportMapping : null
+      })
+    }
+
+    if (rowErrors.length > 0) {
+      return NextResponse.json({ 
+        ok: false, 
+        errors: rowErrors 
+      }, { status: 400 })
+    }
+
+    // Check for existing IDs in database
+    if (hasIdColumn && providedIds.size > 0) {
+      const existing = await prisma.sentence.findMany({
+        where: { id: { in: Array.from(providedIds) } },
+        select: { id: true }
+      })
+
+      if (existing.length > 0) {
+        return NextResponse.json({ 
+          ok: false, 
+          errors: [`The following IDs already exist in the database: ${existing.map(e => e.id).join(', ')}`]
+        }, { status: 400 })
+      }
+    }
+
+    // Dry-run response
+    if (sp.dryRun) {
+      return NextResponse.json({ 
+        ok: true, 
+        dryRun: true,
+        summary: {
+          totalRows: sentences.length,
+          hasIdColumn,
+          fieldColumns: fieldColumns.map(c => c.substring(6)),
+          supportColumns: supportColumns.map(c => c.substring(8)),
+          fieldMapping,
+          supportMapping: Object.keys(supportMapping).length > 0 ? supportMapping : null
+        }
+      })
+    }
+
+    // Commit import
+    let importId: string
+    
+    await prisma.$transaction(async (tx) => {
+      // Create import record
+      const sentenceImport = await tx.sentenceImport.create({
+        data: {
+          fileName,
+          totalRows: sentences.length,
+          // uploadedById: null, // TODO: Add auth later
+        }
+      })
+
+      importId = sentenceImport.id
+
+      // Insert sentences in batches using createMany for performance
+      for (let i = 0; i < sentences.length; i += BATCH_SIZE) {
+        const chunk = sentences.slice(i, i + BATCH_SIZE)
+        
+        await tx.sentence.createMany({
+          data: chunk.map(s => ({
+            ...(hasIdColumn && { id: s.id }), // Only include id if provided
+            importId,
+            importOrder: s.importOrder, // Include import order for stable sorting
+            field1: s.field1,
+            field2: s.field2,
+            field3: s.field3,
+            field4: s.field4,
+            field5: s.field5,
+            support1: s.support1,
+            support2: s.support2,
+            support3: s.support3,
+            support4: s.support4,
+            support5: s.support5,
+            fieldMapping: s.fieldMapping,
+            supportMapping: s.supportMapping
+          }))
+        })
+
+        // Log progress
+        const progress = Math.round(((i + chunk.length) / sentences.length) * 100)
+        console.log(`Import progress: ${progress}%`)
+      }
+    })
+
+    return NextResponse.json({ 
+      ok: true, 
+      dryRun: false, 
+      count: sentences.length,
+      importId
+    })
+
+  } catch (e: any) {
+    console.error('Import error:', e)
+    return NextResponse.json({ 
+      ok: false, 
+      error: e?.message || String(e) 
+    }, { status: 500 })
+  }
+}

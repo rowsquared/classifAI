@@ -1,0 +1,362 @@
+"use client"
+import { useState, useEffect } from 'react'
+import TaxonomyBrowser, { type Taxonomy, type SelectedLabel } from '../TaxonomyBrowser'
+import ResizablePanel from '../ResizablePanel'
+
+interface BulkLabelPanelProps {
+  sentenceIds: string[]
+  onClose: () => void
+  onSuccess: () => void
+}
+
+export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: BulkLabelPanelProps) {
+  const [taxonomy, setTaxonomy] = useState<Taxonomy | null>(null)
+  const [selectedLabels, setSelectedLabels] = useState<SelectedLabel[]>([])
+  const [comment, setComment] = useState('')
+  const [showCommentDialog, setShowCommentDialog] = useState(false)
+  const [flagged, setFlagged] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [labelingStartedAt] = useState<Date>(new Date()) // Record when bulk panel opened
+
+  // Load taxonomy
+  useEffect(() => {
+    const loadTaxonomy = async () => {
+      try {
+        const res = await fetch('/api/taxonomies/active')
+        if (!res.ok) throw new Error('Failed to fetch taxonomies')
+        const data = await res.json()
+        if (data.ok && data.taxonomies.length > 0) {
+          const iscoTaxonomy = data.taxonomies.find((t: any) => t.key === 'ISCO')
+          if (iscoTaxonomy) {
+            setTaxonomy({
+              key: iscoTaxonomy.key,
+              displayName: iscoTaxonomy.displayName,
+              maxDepth: iscoTaxonomy.maxDepth || 5,
+              levelNames: iscoTaxonomy.levelNames
+            })
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load taxonomy:', error)
+      }
+    }
+    loadTaxonomy()
+  }, [])
+
+  // Check if we have a leaf or unknown selected
+  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || l.nodeCode === -99)
+
+  // Handle Unknown
+  const handleUnknown = () => {
+    // Mark as unknown using special code -99
+    setSelectedLabels([{
+      level: 1,
+      nodeCode: -99,
+      taxonomyKey: taxonomy?.key || 'ISCO',
+      label: 'Unknown',
+      isLeaf: true
+    }])
+  }
+
+  // Handle Flag - toggle and save immediately
+  const handleFlag = async () => {
+    const newFlaggedState = !flagged
+    setFlagged(newFlaggedState)
+    
+    // Save flag state immediately for all sentences
+    try {
+      const responses = await Promise.all(sentenceIds.map(id =>
+        fetch(`/api/sentences/${id}/annotations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'pending', // Keep current status
+            annotations: [],
+            flagged: newFlaggedState
+          })
+        })
+      ))
+      
+      // Check if all requests succeeded
+      const allSucceeded = responses.every(r => r.ok)
+      if (!allSucceeded) {
+        throw new Error('Some flag updates failed')
+      }
+      
+      // Refresh the queue to show updated flags
+      if (onSuccess) {
+        onSuccess()
+      }
+    } catch (error) {
+      console.error('Failed to update flags:', error)
+      alert('Failed to update flags. Please try again.')
+    }
+  }
+
+  // Handle Skip (mark all as skipped and close)
+  const handleSkip = async () => {
+    try {
+      setSubmitting(true)
+      
+      // Update all sentences to skipped status
+      // Note: flags and comments are already saved immediately when clicked/entered
+      for (const id of sentenceIds) {
+        await fetch(`/api/sentences/${id}/annotations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: 'skipped',
+            annotations: [],
+            labelingStartedAt: labelingStartedAt.toISOString()
+          })
+        })
+      }
+
+      onSuccess()
+      onClose()
+    } catch (error) {
+      console.error('Failed to skip sentences:', error)
+      alert('Failed to skip sentences')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // Handle Submit
+  const handleSubmit = async () => {
+    if (!hasLeafOrUnknown || !taxonomy) {
+      alert('Please select a complete path or mark as unknown')
+      return
+    }
+
+    try {
+      setSubmitting(true)
+
+      // Prepare annotations (including unknown as -99)
+      const annotations = selectedLabels.map(l => ({ 
+        level: l.level, 
+        nodeCode: l.nodeCode // -99 for unknown
+      }))
+
+      // Call bulk label API
+      // Note: flags and comments are already saved immediately when clicked/entered
+      const payload: any = {
+        sentenceIds,
+        taxonomyKey: taxonomy.key,
+        labelingStartedAt: labelingStartedAt.toISOString()
+      }
+      
+      if (annotations.length > 0) {
+        payload.annotations = annotations
+      }
+      
+      const res = await fetch('/api/sentences/bulk-label', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Bulk label failed')
+      }
+
+      onSuccess()
+      onClose()
+    } catch (error) {
+      console.error('Failed to label sentences:', error)
+      alert(error instanceof Error ? error.message : 'Failed to label sentences')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!taxonomy) {
+    return (
+      <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+        <div className="bg-white p-6 rounded-lg">
+          <div className="text-gray-900">Loading taxonomy...</div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div 
+        className="fixed inset-0 bg-black/10 z-40"
+        onClick={onClose}
+      />
+
+      {/* Slide-in Panel */}
+      <div className="fixed inset-y-0 right-0 z-50 flex" style={{ width: '100vw', pointerEvents: 'none' }}>
+        <div className="flex-1" style={{ pointerEvents: 'none' }} />
+        <ResizablePanel
+          defaultWidth={50}
+          minWidth={30}
+          maxWidth={70}
+          side="right"
+          className="bg-white shadow-2xl flex flex-col"
+          style={{ pointerEvents: 'auto' }}
+        >
+          {/* Header */}
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">
+                Bulk Label
+              </h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Labeling {sentenceIds.length} {sentenceIds.length === 1 ? 'sentence' : 'sentences'}
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Taxonomy Browser */}
+          <TaxonomyBrowser
+            taxonomy={taxonomy}
+            selectedLabels={selectedLabels}
+            onLabelsChange={setSelectedLabels}
+          />
+
+          {/* Sticky Action Buttons */}
+          <div className="border-t p-4 bg-white">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => setShowCommentDialog(true)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                  comment 
+                    ? 'bg-green-200 text-green-800 hover:bg-green-300' 
+                    : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
+                }`}
+                title="Add Comment"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <span className="text-sm font-medium">Comment</span>
+              </button>
+              <button
+                onClick={handleFlag}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                  flagged
+                    ? 'bg-red-200 text-red-800 hover:bg-red-300' 
+                    : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
+                }`}
+                title={flagged ? 'Unflag all selected sentences' : 'Flag all selected sentences'}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" />
+                </svg>
+                <span className="text-sm font-medium">Flag</span>
+              </button>
+              <button
+                onClick={handleUnknown}
+                className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-800 hover:bg-indigo-200 rounded-lg transition-colors"
+                title="Unknown"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-sm font-medium">Unknown</span>
+              </button>
+              <button
+                onClick={handleSkip}
+                disabled={submitting}
+                className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-800 hover:bg-indigo-200 rounded-lg transition-colors disabled:opacity-50"
+                title="Skip"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                </svg>
+                <span className="text-sm font-medium">Skip</span>
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={!hasLeafOrUnknown || submitting}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ml-auto ${
+                  hasLeafOrUnknown && !submitting
+                    ? 'bg-indigo-500 text-white hover:bg-indigo-600' 
+                    : 'bg-indigo-100 text-indigo-400 cursor-not-allowed'
+                }`}
+                title="Submit"
+              >
+                <span className="text-sm font-medium">
+                  {submitting ? 'Submitting...' : `Submit (${sentenceIds.length})`}
+                </span>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </ResizablePanel>
+      </div>
+
+      {/* Comment Dialog */}
+      {showCommentDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
+          <div className="bg-white rounded-lg p-6 w-[32rem]">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Add Comment</h3>
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="This comment will be added to all selected sentences..."
+              className="w-full p-3 border border-gray-300 rounded-md h-32 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setShowCommentDialog(false)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (comment.trim()) {
+                    try {
+                      // Save comment to all selected sentences immediately
+                      const responses = await Promise.all(sentenceIds.map(id =>
+                        fetch(`/api/sentences/${id}/comments`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ body: comment.trim() })
+                        })
+                      ))
+                      
+                      // Check if all requests succeeded
+                      const allSucceeded = responses.every(r => r.ok)
+                      if (!allSucceeded) {
+                        throw new Error('Some comment saves failed')
+                      }
+                      
+                      // Refresh the queue to show updated comments
+                      if (onSuccess) {
+                        onSuccess()
+                      }
+                    } catch (error) {
+                      console.error('Failed to save comments:', error)
+                      alert('Failed to save comments. Please try again.')
+                    }
+                  }
+                  setShowCommentDialog(false)
+                }}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}

@@ -1,0 +1,45 @@
+/**
+ * Format field names from snake_case to Title Case
+ * Example: "job_description" -> "Job Description"
+ */
+export function formatFieldName(key: string): string {
+  return key
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
+/**
+ * Format date to relative time (e.g., "2h ago", "3d ago")
+ */
+export function formatRelativeTime(date: string | null): string {
+  if (!date) return 'Never'
+  
+  const now = new Date()
+  const then = new Date(date)
+  const diffMs = now.getTime() - then.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  const diffMin = Math.floor(diffSec / 60)
+  const diffHour = Math.floor(diffMin / 60)
+  const diffDay = Math.floor(diffHour / 24)
+  const diffWeek = Math.floor(diffDay / 7)
+  const diffMonth = Math.floor(diffDay / 30)
+  const diffYear = Math.floor(diffDay / 365)
+  
+  if (diffSec < 60) return 'Just now'
+  if (diffMin < 60) return `${diffMin}m ago`
+  if (diffHour < 24) return `${diffHour}h ago`
+  if (diffDay < 7) return `${diffDay}d ago`
+  if (diffWeek < 4) return `${diffWeek}w ago`
+  if (diffMonth < 12) return `${diffMonth}mo ago`
+  return `${diffYear}y ago`
+}
+
+/**
+ * Format date to full datetime string
+ */
+export function formatDateTime(date: string | null): string {
+  if (!date) return 'Never'
+  return new Date(date).toLocaleString()
+}
+
