@@ -41,33 +41,67 @@ export async function GET(
     }
 
     // Fetch labels for annotations (including handling unknown/-99)
-    const annotationsWithLabels = await Promise.all(
-      sentence.annotations.map(async (ann) => {
-        if (ann.nodeCode === -99) {
-          return {
-            ...ann,
-            nodeLabel: 'Unknown'
-          }
-        }
-        
-        const node = await prisma.taxonomyNode.findFirst({
-          where: {
-            taxonomyId: ann.taxonomyId,
-            code: ann.nodeCode
-          },
-          select: {
-            label: true,
-            isLeaf: true
-          }
-        })
-        
-        return {
-          ...ann,
-          nodeLabel: node?.label || '',
-          isLeaf: node?.isLeaf || false
+    // Optimize: fetch all nodes in one query instead of N queries
+    const annotationsToLookup = sentence.annotations.filter(ann => ann.nodeCode !== -99)
+    
+    // Build lookup map: (taxonomyId, code) -> node
+    const nodeLookup = new Map<string, { label: string; definition: string | null; isLeaf: boolean | null }>()
+    
+    if (annotationsToLookup.length > 0) {
+      // Get unique (taxonomyId, code) pairs
+      const lookupKeys = new Set(
+        annotationsToLookup.map(ann => `${ann.taxonomyId}:${ann.nodeCode}`)
+      )
+      
+      // Fetch all nodes in one query
+      const nodes = await prisma.taxonomyNode.findMany({
+        where: {
+          OR: Array.from(lookupKeys).map(key => {
+            const [taxonomyId, code] = key.split(':')
+            return {
+              taxonomyId,
+              code: parseInt(code, 10)
+            }
+          })
+        },
+        select: {
+          taxonomyId: true,
+          code: true,
+          label: true,
+          definition: true,
+          isLeaf: true
         }
       })
-    )
+      
+      // Build lookup map
+      nodes.forEach(node => {
+        nodeLookup.set(`${node.taxonomyId}:${node.code}`, {
+          label: node.label,
+          definition: node.definition,
+          isLeaf: node.isLeaf
+        })
+      })
+    }
+    
+    // Map annotations with labels
+    const annotationsWithLabels = sentence.annotations.map((ann) => {
+      if (ann.nodeCode === -99) {
+        return {
+          ...ann,
+          nodeLabel: 'Unknown'
+        }
+      }
+      
+      const key = `${ann.taxonomyId}:${ann.nodeCode}`
+      const node = nodeLookup.get(key)
+      
+      return {
+        ...ann,
+        nodeLabel: node?.label || '',
+        nodeDefinition: node?.definition || null,
+        isLeaf: node?.isLeaf || false
+      }
+    })
 
     // Replace annotations with enriched version
     const enrichedSentence = {
@@ -84,30 +118,32 @@ export async function GET(
       }
     } else if (session.user.role === 'supervisor') {
       // Supervisors can see sentences assigned to them or their supervised users
-      const supervisor = await prisma.user.findUnique({
-        where: { id: session.user.id },
-        include: {
-          labellers: {
-            include: {
-              labellers: true
-            }
-          }
-        }
+      // Optimize: Get direct supervised users first, then their supervised users
+      const directSupervised = await prisma.user.findMany({
+        where: { supervisorId: session.user.id },
+        select: { id: true }
       })
-
-      if (supervisor) {
-        const visibleUserIds = new Set<string>([session.user.id])
-        supervisor.labellers.forEach(labeller => {
-          visibleUserIds.add(labeller.id)
-          labeller.labellers.forEach(nestedLabeller => {
-            visibleUserIds.add(nestedLabeller.id)
+      
+      const directSupervisedIds = directSupervised.map(u => u.id)
+      
+      // Get nested supervised users (users supervised by direct supervised users)
+      const nestedSupervised = directSupervisedIds.length > 0
+        ? await prisma.user.findMany({
+            where: { supervisorId: { in: directSupervisedIds } },
+            select: { id: true }
           })
-        })
-
-        const isVisible = enrichedSentence.assignments.some(a => visibleUserIds.has(a.userId))
-        if (!isVisible) {
-          return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-        }
+        : []
+      
+      const visibleUserIds = new Set<string>([
+        session.user.id,
+        ...directSupervisedIds,
+        ...nestedSupervised.map(u => u.id)
+      ])
+      
+      const isVisible = enrichedSentence.assignments.some(a => visibleUserIds.has(a.userId))
+      
+      if (!isVisible) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
       }
     }
     // Admins can see all sentences

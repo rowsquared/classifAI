@@ -104,7 +104,6 @@ export default function QueuePage() {
     return true
   })
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'submitted' | 'skipped'>('pending')
-  const [selectedTaxonomy, setSelectedTaxonomy] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [bulkLabelOpen, setBulkLabelOpen] = useState(false)
   const [assignmentModalOpen, setAssignmentModalOpen] = useState(false)
@@ -206,10 +205,35 @@ export default function QueuePage() {
     loadTaxonomies()
   }, [])
 
-  // Fetch stats
+  // Fetch stats with current filters applied
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch('/api/sentences/stats')
+      const params = new URLSearchParams()
+      
+      // Add search query
+      if (searchQuery) params.set('q', searchQuery)
+      
+      // Add filters (same logic as fetchQueue)
+      if (filters.status.length > 0) {
+        filters.status.forEach(s => params.append('status', s))
+      }
+      if (filters.userId) params.set('userId', filters.userId)
+      if (filters.assignedToUserId) params.set('assignedToUserId', filters.assignedToUserId)
+      if (filters.dateRange.from) params.set('dateFrom', filters.dateRange.from)
+      if (filters.dateRange.to) params.set('dateTo', filters.dateRange.to)
+      if (filters.taxonomyKey) params.set('taxonomyKey', filters.taxonomyKey)
+      if (filters.level !== null) params.set('level', String(filters.level))
+      if (filters.code !== null) params.set('code', String(filters.code))
+      if (filters.source) params.set('source', filters.source)
+      if (filters.flagged !== null) params.set('flagged', String(filters.flagged))
+      if (filters.hasComments !== null) params.set('hasComments', String(filters.hasComments))
+      
+      // Support filters
+      Object.entries(filters.supportFilters).forEach(([key, value]) => {
+        if (value) params.set(key, value)
+      })
+      
+      const res = await fetch(`/api/sentences/stats?${params}`)
       if (!res.ok) throw new Error('Failed to fetch stats')
       const data = await res.json()
       if (data.ok) {
@@ -218,7 +242,7 @@ export default function QueuePage() {
     } catch (error) {
       console.error('Failed to load stats:', error)
     }
-  }, [])
+  }, [searchQuery, filters])
 
   useEffect(() => {
     fetchStats()
@@ -394,43 +418,6 @@ export default function QueuePage() {
     <>
       <PageHeader 
         title="Queue"
-        actions={someSelected ? (
-          <>
-            <span className="text-sm font-medium text-gray-900">
-              {selectedIds.size} {selectedIds.size === 1 ? 'sentence' : 'sentences'} selected
-            </span>
-            <div className="h-4 w-px bg-gray-300"></div>
-            <button
-              onClick={() => setBulkLabelOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
-              title="Apply the same label to all selected sentences"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-              </svg>
-              Bulk Label
-            </button>
-            {canAssign && (
-              <button
-                onClick={() => setAssignmentModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
-                title="Assign sentences to users"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                Assign
-              </button>
-            )}
-            <div className="h-4 w-px bg-gray-300"></div>
-            <button
-              onClick={() => setSelectedIds(new Set())}
-              className="px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors text-sm"
-            >
-              Clear Selection
-            </button>
-          </>
-        ) : undefined}
       />
 
       <div className="flex h-[calc(100vh-66px)]">
@@ -453,14 +440,11 @@ export default function QueuePage() {
         />
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-white">
+        <div className="flex-1 flex flex-col overflow-hidden bg-white relative">
           {/* Toolbar */}
           <QueueToolbar
             searchQuery={searchQuery}
             onSearchChange={handleSearch}
-            selectedTaxonomy={selectedTaxonomy}
-            onTaxonomyChange={setSelectedTaxonomy}
-            taxonomies={taxonomies}
             stats={stats}
           />
 
@@ -489,7 +473,7 @@ export default function QueuePage() {
           </div>
 
           {/* Table */}
-          <div className="flex-1 overflow-auto">
+          <div className={`flex-1 overflow-auto ${someSelected ? 'pb-20' : ''}`}>
             {loading ? (
               <div className="p-12 text-center text-gray-600">
                 <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
@@ -539,14 +523,16 @@ export default function QueuePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {queue?.sentences.map((sentence) => (
+                    {queue?.sentences.map((sentence, index) => (
                       <SentenceRow
                         key={sentence.id}
                         sentence={sentence}
                         selected={selectedIds.has(sentence.id)}
                         onSelect={(checked) => handleSelect(sentence.id, checked)}
-                        taxonomyView={selectedTaxonomy}
                         showAssignedTo={session?.user?.role === 'admin' || session?.user?.role === 'supervisor'}
+                        taxonomies={taxonomies}
+                        sentenceIds={queue.sentences.map(s => s.id)}
+                        currentIndex={index}
                       />
                     ))}
                   </tbody>
@@ -566,6 +552,48 @@ export default function QueuePage() {
               </>
             )}
           </div>
+
+          {/* Fixed Footer for Bulk Actions */}
+          {someSelected && (
+            <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-8 py-4 z-20 shadow-lg">
+              <div className="flex items-center justify-between max-w-full">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-medium text-gray-900">
+                    {selectedIds.size} {selectedIds.size === 1 ? 'sentence' : 'sentences'} selected
+                  </span>
+                  <div className="h-4 w-px bg-gray-300"></div>
+                  <button
+                    onClick={() => setBulkLabelOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm font-medium"
+                    title="Apply the same label to all selected sentences"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                    </svg>
+                    Bulk Label
+                  </button>
+                  {canAssign && (
+                    <button
+                      onClick={() => setAssignmentModalOpen(true)}
+                      className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                      title="Assign sentences to users"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                      Assign
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors text-sm"
+                >
+                  Clear Selection
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

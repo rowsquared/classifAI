@@ -417,7 +417,7 @@ export default function TaxonomyAdminPage() {
                   type="text"
                   value={formData.key}
                   onChange={e => setFormData({...formData, key: e.target.value.toUpperCase()})}
-                  placeholder="ISCO"
+                  placeholder="e.g. ISCO"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
                 />
                 <p className="text-xs text-gray-500 mt-1">ℹ️ Unique identifier, cannot be changed later</p>
@@ -431,7 +431,7 @@ export default function TaxonomyAdminPage() {
                   type="text"
                   value={formData.displayName}
                   onChange={e => setFormData({...formData, displayName: e.target.value})}
-                  placeholder="International Standard Classification of Occupations"
+                  placeholder="e.g. International Standard Classification of Occupations"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
                 />
               </div>

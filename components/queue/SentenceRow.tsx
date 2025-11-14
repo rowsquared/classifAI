@@ -56,16 +56,20 @@ interface SentenceRowProps {
   sentence: Sentence
   selected: boolean
   onSelect: (checked: boolean) => void
-  taxonomyView: string | null
   showAssignedTo?: boolean
+  taxonomies?: Array<{ key: string }> // Ordered list of taxonomies to match color order
+  sentenceIds?: string[] // List of sentence IDs in current view (for navigation)
+  currentIndex?: number // Current index in the list
 }
 
 export default function SentenceRow({
   sentence,
   selected,
   onSelect,
-  taxonomyView,
-  showAssignedTo = false
+  showAssignedTo = false,
+  taxonomies = [],
+  sentenceIds = [],
+  currentIndex = 0
 }: SentenceRowProps) {
   const router = useRouter()
 
@@ -74,17 +78,24 @@ export default function SentenceRow({
     if ((e.target as HTMLElement).closest('input[type="checkbox"]')) {
       return
     }
-    router.push(`/queue/${sentence.id}`)
+    // Include list and index in URL for navigation context
+    const params = new URLSearchParams()
+    if (sentenceIds.length > 0) {
+      params.set('list', sentenceIds.join(','))
+      params.set('index', currentIndex.toString())
+    }
+    const queryString = params.toString()
+    router.push(`/queue/${sentence.id}${queryString ? `?${queryString}` : ''}`)
   }
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending':
-        return 'bg-yellow-100 text-yellow-800'
+        return 'bg-gray-100 text-gray-800'
       case 'submitted':
         return 'bg-green-100 text-green-800'
       case 'skipped':
-        return 'bg-gray-100 text-gray-800'
+        return 'bg-yellow-100 text-yellow-800'
       default:
         return 'bg-gray-100 text-gray-800'
     }
@@ -134,10 +145,34 @@ export default function SentenceRow({
 
   const contentParts = buildContentString()
 
-  // Filter annotations by taxonomy view
-  const visibleAnnotations = taxonomyView
-    ? sentence.annotations.filter(a => a.taxonomy.key === taxonomyView)
-    : sentence.annotations
+  // Group annotations by taxonomy
+  const annotationsByTaxonomy = sentence.annotations.reduce((acc, ann) => {
+    const key = ann.taxonomy.key
+    if (!acc[key]) {
+      acc[key] = []
+    }
+    acc[key].push(ann)
+    return acc
+  }, {} as Record<string, Annotation[]>)
+
+  // Color scheme for different taxonomies (matches TaxonomyBrowser)
+  const taxonomyColors = [
+    'bg-indigo-100 text-indigo-700',  // Index 0: Primary/Teal
+    'bg-purple-100 text-purple-700',  // Index 1: Purple
+    'bg-pink-100 text-pink-700',      // Index 2: Pink
+    'bg-rose-100 text-rose-700',      // Index 3: Rose
+    'bg-orange-100 text-orange-700',   // Index 4: Orange
+  ]
+
+  const getTaxonomyColor = (taxonomyKey: string) => {
+    // Use the ordered taxonomies list if provided, otherwise fall back to alphabetical sort
+    const orderedTaxonomies = taxonomies.length > 0 
+      ? taxonomies.map(t => t.key)
+      : Object.keys(annotationsByTaxonomy).sort()
+    
+    const index = orderedTaxonomies.indexOf(taxonomyKey)
+    return taxonomyColors[index % taxonomyColors.length] || 'bg-gray-100 text-gray-700'
+  }
 
   const commentCount = sentence._count?.comments || sentence.comments?.length || 0
 
@@ -200,23 +235,23 @@ export default function SentenceRow({
 
       {/* Labels */}
       <td className="px-4 py-3 w-[18%]">
-        <div className="flex flex-wrap gap-1">
-          {visibleAnnotations.length > 0 ? (
-            visibleAnnotations.map((ann, i) => (
-              <span
-                key={i}
-                className={`text-xs px-2 py-1 rounded whitespace-nowrap ${
-                  ann.source === 'ai'
-                    ? 'bg-indigo-100 text-indigo-700'
-                    : 'bg-indigo-100 text-indigo-700'
-                }`}
-                title={`${ann.taxonomy.key} L${ann.level}: ${ann.nodeCode}${
-                  ann.nodeLabel ? ` - ${ann.nodeLabel}` : ''
-                }`}
-              >
-                {ann.source === 'ai' && '🤖 '}
-                {ann.nodeCode}
-              </span>
+        <div className="flex flex-col gap-1.5">
+          {Object.keys(annotationsByTaxonomy).length > 0 ? (
+            Object.entries(annotationsByTaxonomy).map(([taxonomyKey, annotations]) => (
+              <div key={taxonomyKey} className="flex flex-wrap gap-1">
+                {annotations.map((ann, i) => (
+                  <span
+                    key={i}
+                    className={`text-xs px-2 py-1 rounded whitespace-nowrap ${getTaxonomyColor(taxonomyKey)}`}
+                    title={`${ann.taxonomy.key} L${ann.level}: ${ann.nodeCode}${
+                      ann.nodeLabel ? ` - ${ann.nodeLabel}` : ''
+                    }`}
+                  >
+                    {ann.source === 'ai' && '🤖 '}
+                    {ann.nodeCode}
+                  </span>
+                ))}
+              </div>
             ))
           ) : (
             <span className="text-gray-400 text-xs">—</span>

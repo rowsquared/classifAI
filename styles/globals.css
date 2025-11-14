@@ -2,6 +2,18 @@
 
 @theme {
   --font-family-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  
+  /* Custom teal color scale based on #008080 */
+  --color-indigo-50: #e0f2f2;
+  --color-indigo-100: #b3e0e0;
+  --color-indigo-200: #80cccc;
+  --color-indigo-300: #4db8b8;
+  --color-indigo-400: #26a5a5;
+  --color-indigo-500: #009090;
+  --color-indigo-600: #008080;
+  --color-indigo-700: #006666;
+  --color-indigo-800: #004d4d;
+  --color-indigo-900: #003333;
 }
 
 :root {
@@ -20,13 +32,13 @@ body {
   color: var(--foreground);
 }
 
-/* Checkbox styling - override browser default blue to indigo */
+/* Checkbox styling - override browser default color to custom teal */
 input[type="checkbox"] {
-  accent-color: #4f46e5; /* indigo-600 */
+  accent-color: #008080; /* indigo-600 - custom teal */
   cursor: pointer;
 }
 
 input[type="checkbox"]:focus {
-  outline: 2px solid #6366f1; /* indigo-500 */
+  outline: 2px solid #009090; /* indigo-500 - custom teal */
   outline-offset: 2px;
 }

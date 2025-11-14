@@ -23,9 +23,41 @@ export async function DELETE(
       }, { status: 404 })
     }
 
-    // Delete import (cascade will remove sentences)
-    await prisma.sentenceImport.delete({
-      where: { id }
+    // Delete in transaction: annotations, comments, assignments first, then sentences, then import
+    await prisma.$transaction(async (tx) => {
+      // Get all sentence IDs for this import
+      const sentences = await tx.sentence.findMany({
+        where: { importId: id },
+        select: { id: true }
+      })
+      const sentenceIds = sentences.map(s => s.id)
+
+      if (sentenceIds.length > 0) {
+        // Delete annotations first (they reference sentences)
+        await tx.sentenceAnnotation.deleteMany({
+          where: { sentenceId: { in: sentenceIds } }
+        })
+
+        // Delete comments
+        await tx.comment.deleteMany({
+          where: { sentenceId: { in: sentenceIds } }
+        })
+
+        // Delete assignments (has onDelete: Cascade but let's be explicit)
+        await tx.sentenceAssignment.deleteMany({
+          where: { sentenceId: { in: sentenceIds } }
+        })
+      }
+
+      // Delete sentences (cascade from import, but we've already cleaned up dependencies)
+      await tx.sentence.deleteMany({
+        where: { importId: id }
+      })
+
+      // Finally delete the import
+      await tx.sentenceImport.delete({
+        where: { id }
+      })
     })
 
     return NextResponse.json({ 

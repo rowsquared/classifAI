@@ -9,6 +9,7 @@ interface ResizablePanelProps {
   side?: 'left' | 'right'
   className?: string
   style?: React.CSSProperties
+  storageKey?: string
 }
 
 export default function ResizablePanel({
@@ -18,9 +19,22 @@ export default function ResizablePanel({
   maxWidth = 70,
   side = 'right',
   className = '',
-  style = {}
+  style = {},
+  storageKey
 }: ResizablePanelProps) {
-  const [width, setWidth] = useState(defaultWidth)
+  const [width, setWidth] = useState(() => {
+    if (typeof window === 'undefined') return defaultWidth
+    if (storageKey) {
+      const stored = window.localStorage.getItem(storageKey)
+      if (stored) {
+        const parsed = parseFloat(stored)
+        if (!Number.isNaN(parsed)) {
+          return Math.max(minWidth, Math.min(maxWidth, parsed))
+        }
+      }
+    }
+    return defaultWidth
+  })
   const [isResizing, setIsResizing] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -69,6 +83,12 @@ export default function ResizablePanel({
       document.body.style.userSelect = ''
     }
   }, [isResizing, side, minWidth, maxWidth])
+
+  useEffect(() => {
+    if (storageKey && typeof window !== 'undefined') {
+      window.localStorage.setItem(storageKey, String(width))
+    }
+  }, [width, storageKey])
 
   return (
     <div

@@ -1,6 +1,6 @@
 "use client"
-import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useEffect, useState, useMemo } from 'react'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import PageHeader from '@/components/PageHeader'
 import TaxonomyBrowser, { type Taxonomy, type SelectedLabel } from '@/components/TaxonomyBrowser'
@@ -28,6 +28,7 @@ type Sentence = {
     level: number
     nodeCode: number
     nodeLabel?: string
+    nodeDefinition?: string | null
     isLeaf?: boolean
     taxonomy: { key: string }
   }>
@@ -37,7 +38,29 @@ type Sentence = {
 export default function LabelingPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const sentenceId = params.sentenceId as string
+  
+  // Get navigation list from URL params (reactive to URL changes)
+  const { sentenceIds, currentIndex } = useMemo(() => {
+    const listParam = searchParams.get('list')
+    const indexParam = searchParams.get('index')
+    const ids = listParam ? listParam.split(',') : []
+    let idx = indexParam ? parseInt(indexParam, 10) : -1
+    
+    // Verify that the currentIndex matches the sentenceId (in case URL was manually changed)
+    if (ids.length > 0 && idx >= 0 && idx < ids.length) {
+      if (ids[idx] !== sentenceId) {
+        // Find the correct index
+        const correctIndex = ids.indexOf(sentenceId)
+        if (correctIndex >= 0) {
+          idx = correctIndex
+        }
+      }
+    }
+    
+    return { sentenceIds: ids, currentIndex: idx }
+  }, [searchParams, sentenceId])
   
   const [sentence, setSentence] = useState<Sentence | null>(null)
   const [loading, setLoading] = useState(true)
@@ -45,65 +68,77 @@ export default function LabelingPage() {
   const [comment, setComment] = useState('')
   const [showCommentDialog, setShowCommentDialog] = useState(false)
   const [hasComment, setHasComment] = useState(false)
+  const [showResolvedComments, setShowResolvedComments] = useState(false)
+  const [hasResolvedComments, setHasResolvedComments] = useState(false)
   const [existingComments, setExistingComments] = useState<Array<{
     id: string
     body: string
     createdAt: string
+    resolved: boolean
+    resolvedAt: string | null
     author: { name: string | null }
   }>>([])
-  const [taxonomy, setTaxonomy] = useState<Taxonomy | null>(null)
+  const [taxonomies, setTaxonomies] = useState<Taxonomy[]>([])
+  const [activeTaxonomyIndex, setActiveTaxonomyIndex] = useState(0)
+  const [completedTaxonomies, setCompletedTaxonomies] = useState<Set<string>>(new Set())
   const [labelingStartedAt] = useState<Date>(new Date()) // Record when user opened this sentence
+  const [currentTaxonomyLevel, setCurrentTaxonomyLevel] = useState(1) // Current level being viewed in TaxonomyBrowser
 
-  // Load taxonomy metadata
+  // Get active taxonomy
+  const activeTaxonomy = taxonomies[activeTaxonomyIndex] || null
+
+  // Helper function to calculate completed taxonomies from annotations
+  // Since the frontend only allows submission when a leaf/unknown is selected,
+  // if annotations exist for a taxonomy, we can assume they are complete
+  const calculateCompletedTaxonomies = (annotations: any[], taxonomiesList: Taxonomy[]) => {
+    const completed = new Set<string>()
+    taxonomiesList.forEach(tax => {
+      const taxAnnotations = annotations.filter((ann: any) => ann.taxonomy.key === tax.key)
+      // If annotations exist, they must be complete (leaf or unknown) because
+      // the frontend submit button only enables in those cases
+      if (taxAnnotations.length > 0) {
+        completed.add(tax.key)
+      }
+    })
+    return completed
+  }
+
+  // Load all active taxonomies
   useEffect(() => {
-    const loadTaxonomy = async () => {
+    const loadTaxonomies = async () => {
       try {
-        const res = await fetch('/api/taxonomies')
+        const res = await fetch('/api/taxonomies/active')
         if (!res.ok) throw new Error('Failed to fetch taxonomies')
         const data = await res.json()
         if (data.ok && data.taxonomies.length > 0) {
-          const iscoTaxonomy = data.taxonomies.find((t: any) => t.key === 'ISCO' && t.isActive)
-          if (iscoTaxonomy) {
-            setTaxonomy({
-              key: iscoTaxonomy.key,
-              displayName: iscoTaxonomy.displayName,
-              maxDepth: iscoTaxonomy.maxDepth || 5,
-              levelNames: iscoTaxonomy.levelNames
-            })
-          }
+          const loadedTaxonomies = data.taxonomies.map((t: any) => ({
+            key: t.key,
+            displayName: t.displayName,
+            maxDepth: t.maxDepth || 5,
+            levelNames: t.levelNames
+          }))
+          setTaxonomies(loadedTaxonomies)
+          setActiveTaxonomyIndex(0) // Start with first taxonomy
         }
       } catch (error) {
-        console.error('Failed to load taxonomy:', error)
+        console.error('Failed to load taxonomies:', error)
       }
     }
-    loadTaxonomy()
+    loadTaxonomies()
   }, [])
 
-  // Load sentence data
+  // Load sentence data (can load in parallel with taxonomies)
   useEffect(() => {
     if (!sentenceId) return
     const loadSentence = async () => {
       try {
+        setLoading(true)
         const res = await fetch(`/api/sentences/${sentenceId}`)
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`)
         }
         const data = await res.json()
         setSentence(data)
-        
-        // Initialize selected labels from existing annotations
-        if (data.annotations && taxonomy) {
-          const labels: SelectedLabel[] = data.annotations
-            .filter((ann: any) => ann.taxonomy.key === taxonomy.key)
-            .map((ann: any) => ({
-              level: ann.level,
-              nodeCode: ann.nodeCode,
-              taxonomyKey: ann.taxonomy.key,
-              label: ann.nodeLabel || '',
-              isLeaf: ann.isLeaf || false
-            }))
-          setSelectedLabels(labels)
-        }
         
         // Check if sentence has comments
         const hasExistingComments = data._count?.comments > 0 || (data.comments && data.comments.length > 0)
@@ -116,18 +151,90 @@ export default function LabelingPage() {
       }
     }
     loadSentence()
-  }, [sentenceId, taxonomy])
+  }, [sentenceId])
+
+  // Initialize selected labels when both sentence and active taxonomy are available
+  useEffect(() => {
+    if (sentence?.annotations && activeTaxonomy) {
+      const labels: SelectedLabel[] = sentence.annotations
+        .filter((ann: any) => ann.taxonomy.key === activeTaxonomy.key)
+        .map((ann: any) => ({
+          level: ann.level,
+          nodeCode: ann.nodeCode,
+          taxonomyKey: ann.taxonomy.key,
+          label: ann.nodeLabel || '',
+          definition: ann.nodeDefinition || undefined,
+          isLeaf: ann.isLeaf || false
+        }))
+      setSelectedLabels(labels)
+    }
+  }, [sentence, activeTaxonomy?.key])
+
+  // Recalculate completed taxonomies whenever sentence annotations or taxonomies change
+  useEffect(() => {
+    if (sentence?.annotations && taxonomies.length > 0) {
+      const completed = calculateCompletedTaxonomies(sentence.annotations, taxonomies)
+      setCompletedTaxonomies(completed)
+    }
+  }, [sentence, taxonomies])
 
   // Load existing comments
-  const loadComments = async () => {
+  const loadComments = async (includeResolved = showResolvedComments) => {
     try {
-      const res = await fetch(`/api/sentences/${sentenceId}/comments`)
+      const res = await fetch(`/api/sentences/${sentenceId}/comments?includeResolved=${includeResolved ? 'true' : 'false'}`)
       if (res.ok) {
         const data = await res.json()
         setExistingComments(data.comments || [])
+        setHasResolvedComments(Boolean(data.hasResolved))
+        const hasUnresolved = (data.comments || []).some((c: any) => !c.resolved)
+        setHasComment(hasUnresolved)
       }
     } catch (error) {
       console.error('Failed to load comments:', error)
+    }
+  }
+
+  const toggleShowResolvedComments = async () => {
+    const nextValue = !showResolvedComments
+    setShowResolvedComments(nextValue)
+    await loadComments(nextValue)
+  }
+
+  const handleResolveComment = async (commentId: string, resolved: boolean) => {
+    try {
+      const res = await fetch(`/api/sentences/${sentenceId}/comments`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commentId, resolved })
+      })
+      if (!res.ok) {
+        console.error('Failed to update comment')
+        alert('Failed to update comment. Please try again.')
+        return
+      }
+      await loadComments(showResolvedComments)
+    } catch (error) {
+      console.error('Failed to update comment:', error)
+      alert('Failed to update comment. Please try again.')
+    }
+  }
+
+  const handleDeleteComment = async (commentId: string) => {
+    try {
+      const res = await fetch(`/api/sentences/${sentenceId}/comments`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commentId })
+      })
+      if (!res.ok) {
+        console.error('Failed to delete comment')
+        alert('Failed to delete comment. Please try again.')
+        return
+      }
+      await loadComments(showResolvedComments)
+    } catch (error) {
+      console.error('Failed to delete comment:', error)
+      alert('Failed to delete comment. Please try again.')
     }
   }
 
@@ -136,28 +243,90 @@ export default function LabelingPage() {
 
   // Handle Unknown
   const handleUnknown = () => {
-    // Mark as unknown using special code -99
-    setSelectedLabels([{
-      level: 1,
+    // Mark current level as unknown, preserving lower level labels
+    if (!activeTaxonomy) return
+    
+    // Keep labels at levels below the current level
+    const lowerLevelLabels = selectedLabels.filter(l => 
+      l.taxonomyKey === activeTaxonomy.key && l.level < currentTaxonomyLevel
+    )
+    
+    // Add unknown at the current level
+    const unknownLabel: SelectedLabel = {
+      level: currentTaxonomyLevel,
       nodeCode: -99,
-      taxonomyKey: taxonomy?.key || 'ISCO',
+      taxonomyKey: activeTaxonomy.key,
       label: 'Unknown',
       isLeaf: true
-    }])
+    }
+    
+    // Combine: lower levels + unknown at current level
+    setSelectedLabels([...lowerLevelLabels, unknownLabel])
+  }
+  
+  // Handle taxonomy tab change
+  const handleTaxonomyTabChange = (index: number) => {
+    if (index < 0 || index >= taxonomies.length) return
+    setActiveTaxonomyIndex(index)
+    setCurrentTaxonomyLevel(1) // Reset to level 1 when switching taxonomies
+    
+    // Load selected labels for the new taxonomy
+    if (sentence && taxonomies[index]) {
+      const labels: SelectedLabel[] = sentence.annotations
+        .filter((ann: any) => ann.taxonomy.key === taxonomies[index].key)
+        .map((ann: any) => ({
+          level: ann.level,
+          nodeCode: ann.nodeCode,
+          taxonomyKey: ann.taxonomy.key,
+          label: ann.nodeLabel || '',
+          definition: ann.nodeDefinition || undefined,
+          isLeaf: ann.isLeaf || false
+        }))
+      setSelectedLabels(labels)
+    } else {
+      setSelectedLabels([])
+    }
   }
 
-  // Get next sentence ID from queue
-  const getNextSentenceId = async () => {
-    try {
-      const res = await fetch('/api/sentences?status=pending&page=1&limit=1&sort=createdAt&order=asc')
-      if (res.ok) {
-        const data = await res.json()
-        if (data.sentences && data.sentences.length > 0) {
-          return data.sentences[0].id
-        }
-      }
-    } catch (error) {
-      console.error('Failed to fetch next sentence:', error)
+  // Navigate to a sentence in the list
+  const navigateToSentence = (targetIndex: number) => {
+    if (sentenceIds.length === 0 || targetIndex < 0 || targetIndex >= sentenceIds.length) {
+      // No list or out of bounds, go back to queue
+      router.push('/queue')
+      return
+    }
+    
+    const targetId = sentenceIds[targetIndex]
+    const params = new URLSearchParams()
+    params.set('list', sentenceIds.join(','))
+    params.set('index', targetIndex.toString())
+    router.push(`/queue/${targetId}?${params.toString()}`)
+  }
+
+  // Navigate to previous sentence in the list
+  const handlePrevious = () => {
+    if (currentIndex > 0) {
+      navigateToSentence(currentIndex - 1)
+    }
+  }
+
+  // Navigate to next sentence in the list
+  const handleNext = () => {
+    if (currentIndex >= 0 && currentIndex < sentenceIds.length - 1) {
+      navigateToSentence(currentIndex + 1)
+    } else {
+      // End of list, go back to queue
+      router.push('/queue')
+    }
+  }
+
+  // Get next sentence ID from the list (for Submit/Skip)
+  const getNextSentenceId = (): string | null => {
+    if (sentenceIds.length === 0 || currentIndex < 0) {
+      return null
+    }
+    if (currentIndex < sentenceIds.length - 1) {
+      return sentenceIds[currentIndex + 1]
     }
     return null
   }
@@ -197,10 +366,10 @@ export default function LabelingPage() {
         })
       })
       if (res.ok) {
-        // Navigate to next sentence
-        const nextId = await getNextSentenceId()
-        if (nextId) {
-          router.push(`/queue/${nextId}`)
+        // Navigate to next sentence in the list
+        const nextId = getNextSentenceId()
+        if (nextId && currentIndex >= 0) {
+          navigateToSentence(currentIndex + 1)
         } else {
           // No more sentences, go back to queue
           router.push('/queue')
@@ -213,7 +382,7 @@ export default function LabelingPage() {
 
   // Handle Submit
   const handleSubmit = async () => {
-    if (!hasLeafOrUnknown || !taxonomy) {
+    if (!hasLeafOrUnknown || !activeTaxonomy) {
       alert('Please select a complete path or mark as unknown')
       return
     }
@@ -223,14 +392,14 @@ export default function LabelingPage() {
       const annotations = selectedLabels.map(l => ({ 
         level: l.level, 
         nodeCode: l.nodeCode, // -99 for unknown
-        taxonomyKey: taxonomy.key
+        taxonomyKey: activeTaxonomy.key
       }))
 
       const res = await fetch(`/api/sentences/${sentenceId}/annotations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          status: 'submitted',
+          status: 'submitted', // Will be updated to 'pending' if not all taxonomies done
           annotations,
           flagged: sentence?.flagged,
           labelingStartedAt: labelingStartedAt.toISOString()
@@ -238,13 +407,44 @@ export default function LabelingPage() {
       })
 
       if (res.ok) {
-        // Navigate to next sentence
-        const nextId = await getNextSentenceId()
-        if (nextId) {
-          router.push(`/queue/${nextId}`)
+        const responseData = await res.json()
+        
+        // Update sentence status from response (avoid full reload)
+        if (sentence) {
+          setSentence({ ...sentence, status: responseData.status })
+        }
+        
+        // Update completed taxonomies from response
+        if (responseData.completedTaxonomies) {
+          setCompletedTaxonomies(new Set(responseData.completedTaxonomies))
+        }
+        
+        // Check if all taxonomies are completed
+        const allCompleted = responseData.allCompleted || false
+        
+        if (allCompleted) {
+          // All taxonomies done, move to next sentence in the list
+          const nextId = getNextSentenceId()
+          if (nextId && currentIndex >= 0) {
+            navigateToSentence(currentIndex + 1)
+          } else {
+            // No more sentences, go back to queue
+            router.push('/queue')
+          }
         } else {
-          // No more sentences, go back to queue
-          router.push('/queue')
+          // Move to next taxonomy tab
+          const nextIndex = activeTaxonomyIndex + 1
+          if (nextIndex < taxonomies.length) {
+            handleTaxonomyTabChange(nextIndex)
+          } else {
+            // All taxonomies done, move to next sentence in the list
+            const nextId = getNextSentenceId()
+            if (nextId && currentIndex >= 0) {
+              navigateToSentence(currentIndex + 1)
+            } else {
+              router.push('/queue')
+            }
+          }
         }
       } else {
         const data = await res.json()
@@ -263,7 +463,7 @@ export default function LabelingPage() {
       
       switch (e.key.toLowerCase()) {
         case 'c':
-          loadComments()
+          loadComments(showResolvedComments)
           setShowCommentDialog(true)
           break
         case 'f':
@@ -285,7 +485,7 @@ export default function LabelingPage() {
 
     window.addEventListener('keydown', handleKeyPress)
     return () => window.removeEventListener('keydown', handleKeyPress)
-  }, [selectedLabels, sentence])
+  }, [selectedLabels, sentence, showResolvedComments])
 
   if (loading) {
     return (
@@ -309,15 +509,32 @@ export default function LabelingPage() {
     )
   }
 
-  if (!taxonomy) {
+  if (taxonomies.length === 0) {
     return (
       <>
         <PageHeader title="Labeling" />
         <div className="flex items-center justify-center h-screen">
-          <div className="text-red-600">No active taxonomy found</div>
+          <div className="text-red-600">No active taxonomies found</div>
         </div>
       </>
     )
+  }
+  
+  // Calculate progress
+  const completedCount = completedTaxonomies.size
+  const totalCount = taxonomies.length
+  const progressText = `${completedCount}/${totalCount} taxonomies completed`
+
+  // Get tab colors based on taxonomy index (matches TaxonomyBrowser)
+  const getTabColors = (index: number) => {
+    const colors = [
+      { active: 'text-indigo-600', checkmark: 'text-indigo-600' },  // Index 0: Primary/Teal
+      { active: 'text-purple-600', checkmark: 'text-purple-600' },  // Index 1: Purple
+      { active: 'text-pink-600', checkmark: 'text-pink-600' },      // Index 2: Pink
+      { active: 'text-rose-600', checkmark: 'text-rose-600' },      // Index 3: Rose
+      { active: 'text-orange-600', checkmark: 'text-orange-600' },   // Index 4: Orange
+    ]
+    return colors[index % colors.length] || colors[0]
   }
 
   const backButton = (
@@ -339,71 +556,133 @@ export default function LabelingPage() {
           minWidth={30}
           maxWidth={70}
           side="left"
-          className="p-6 bg-white overflow-y-auto border-r border-gray-200"
+          storageKey="labeling-left-panel-width"
+          className="bg-white border-r border-gray-200 relative flex flex-col"
         >
-          <div className="space-y-6">
-            {/* Field Columns */}
-            {sentence.fieldMapping && Object.entries(sentence.fieldMapping).map(([num, name]) => {
-              const value = sentence[`field${num}` as keyof Sentence] as string | null
-              if (!value) return null
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="space-y-6">
+              {/* Field Columns */}
+              {sentence.fieldMapping && Object.entries(sentence.fieldMapping).map(([num, name]) => {
+                const value = sentence[`field${num}` as keyof Sentence] as string | null
+                if (!value) return null
+                
+                return (
+                  <div key={num}>
+                    <h2 className="text-sm font-semibold text-indigo-700 mb-3">
+                      {formatFieldName(name)}
+                    </h2>
+                    <div className="p-5 bg-indigo-50/30 border border-indigo-100 rounded-lg">
+                      <p className="text-gray-900 whitespace-pre-wrap leading-relaxed text-[15px]">
+                        {value}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
               
-              return (
-                <div key={num}>
-                  <h2 className="text-sm font-semibold text-indigo-700 mb-3">
-                    {formatFieldName(name)}
+              {/* Support Columns */}
+              {sentence.supportMapping && Object.keys(sentence.supportMapping).length > 0 && (
+                <div className="pt-6 border-t border-gray-200">
+                  <h2 className="text-base font-semibold text-gray-900 mb-4">
+                    Support Information
                   </h2>
-                  <div className="p-5 bg-indigo-50/30 border border-indigo-100 rounded-lg">
-                    <p className="text-gray-900 whitespace-pre-wrap leading-relaxed text-[15px]">
-                      {value}
-                    </p>
+                  <div className="space-y-4">
+                    {Object.entries(sentence.supportMapping).map(([num, name]) => {
+                      const value = sentence[`support${num}` as keyof Sentence] as string | null
+                      if (!value) return null
+                      
+                      return (
+                        <div key={num}>
+                          <h3 className="text-xs font-semibold text-indigo-600 mb-2">
+                            {formatFieldName(name)}
+                          </h3>
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                            {value}
+                          </p>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
-              )
-            })}
-            
-            {/* Support Columns */}
-            {sentence.supportMapping && Object.keys(sentence.supportMapping).length > 0 && (
-              <div className="pt-6 border-t border-gray-200">
-                <h2 className="text-base font-semibold text-gray-900 mb-4">
-                  Support Information
-                </h2>
-                <div className="space-y-4">
-                  {Object.entries(sentence.supportMapping).map(([num, name]) => {
-                    const value = sentence[`support${num}` as keyof Sentence] as string | null
-                    if (!value) return null
-                    
-                    return (
-                      <div key={num}>
-                        <h3 className="text-xs font-semibold text-indigo-600 mb-2">
-                          {formatFieldName(name)}
-                        </h3>
-                        <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
-                          {value}
-                        </p>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
+              )}
+            </div>
+          </div>
+
+          {/* Navigation Buttons - Bottom Right */}
+          <div className="p-4 flex justify-end gap-2 bg-white">
+            <button
+              onClick={handlePrevious}
+              className="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+              title="Previous sentence"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <button
+              onClick={handleNext}
+              className="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+              title="Next sentence"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
           </div>
         </ResizablePanel>
 
         {/* Right Panel - Taxonomy */}
         <div className="flex-1 bg-white relative flex flex-col overflow-hidden">
+          {/* Taxonomy Tabs */}
+          {taxonomies.length > 1 && (
+            <div className="border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center justify-between px-4 py-2">
+                <div className="flex gap-1">
+                  {taxonomies.map((tax, index) => {
+                    const tabColors = getTabColors(index)
+                    return (
+                      <button
+                        key={tax.key}
+                        onClick={() => handleTaxonomyTabChange(index)}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative ${
+                          activeTaxonomyIndex === index
+                            ? `bg-white ${tabColors.active} border-t border-l border-r border-gray-200`
+                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        }`}
+                      >
+                        {tax.key}
+                        {completedTaxonomies.has(tax.key) && (
+                          <span className={`ml-2 ${tabColors.checkmark}`}>✓</span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="text-xs text-gray-600 font-medium">
+                  {progressText}
+                </div>
+              </div>
+            </div>
+          )}
+          
           {/* Taxonomy Browser */}
-          <TaxonomyBrowser
-            taxonomy={taxonomy}
-            selectedLabels={selectedLabels}
-            onLabelsChange={setSelectedLabels}
-          />
+          {activeTaxonomy && (
+            <TaxonomyBrowser
+              key={activeTaxonomy.key} // Force remount when taxonomy changes to reset navigation state
+              taxonomy={activeTaxonomy}
+              selectedLabels={selectedLabels}
+              onLabelsChange={setSelectedLabels}
+              taxonomyIndex={activeTaxonomyIndex}
+              onCurrentLevelChange={setCurrentTaxonomyLevel}
+            />
+          )}
 
           {/* Sticky Action Buttons */}
           <div className="p-4 bg-white">
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => {
-                  loadComments()
+                  loadComments(showResolvedComments)
                   setShowCommentDialog(true)
                 }}
                 className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
@@ -447,7 +726,11 @@ export default function LabelingPage() {
               </button>
               <button
                 onClick={handleSkip}
-                className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-800 hover:bg-indigo-200 rounded-lg transition-colors"
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+                  sentence?.status === 'skipped'
+                    ? 'bg-yellow-200 text-yellow-800 hover:bg-yellow-300'
+                    : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
+                }`}
                 title="Skip (S)"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -482,27 +765,87 @@ export default function LabelingPage() {
       {showCommentDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-[32rem] max-h-[80vh] flex flex-col">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Comments</h3>
-            
-            {/* Existing Comments */}
-            {existingComments.length > 0 && (
-              <div className="mb-4 space-y-3 max-h-60 overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">Comments</h3>
+              <button
+                onClick={() => setShowCommentDialog(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-gray-700">Existing comments</span>
+              <button
+                onClick={toggleShowResolvedComments}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+              >
+                {showResolvedComments ? 'Hide resolved' : 'Show resolved'}
+              </button>
+            </div>
+            {!showResolvedComments && hasResolvedComments && (
+              <p className="text-xs text-gray-500 mb-3">
+                Resolved comments are hidden. Click &quot;Show resolved&quot; to view them.
+              </p>
+            )}
+
+            {existingComments.length > 0 ? (
+              <div className="mb-4 space-y-3 max-h-60 overflow-y-auto pr-1">
                 {existingComments.map((c) => (
-                  <div key={c.id} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex items-start justify-between mb-1">
-                      <span className="text-xs font-medium text-gray-700">
-                        {c.author.name || 'Unknown'}
-                      </span>
+                  <div
+                    key={c.id}
+                    className={`p-3 rounded-lg border ${
+                      c.resolved
+                        ? 'bg-gray-100 border-gray-300 opacity-80'
+                        : 'bg-gray-50 border-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-1">
+                      <div>
+                        <span className="text-xs font-medium text-gray-700">
+                          {c.author.name || 'Unknown'}
+                        </span>
+                        {c.resolved && (
+                          <span className="ml-2 text-xs font-semibold text-green-600">
+                            Resolved
+                          </span>
+                        )}
+                      </div>
                       <span className="text-xs text-gray-500">
                         {new Date(c.createdAt).toLocaleString()}
                       </span>
                     </div>
                     <p className="text-sm text-gray-900 whitespace-pre-wrap">{c.body}</p>
+                    <div className="flex justify-end gap-2 mt-3">
+                      <button
+                        onClick={() => handleResolveComment(c.id, !c.resolved)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                          c.resolved
+                            ? 'border-indigo-200 text-indigo-600 hover:bg-indigo-50'
+                            : 'border-green-200 text-green-700 hover:bg-green-50'
+                        }`}
+                      >
+                        {c.resolved ? 'Reopen' : 'Mark resolved'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteComment(c.id)}
+                        className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-200 text-red-700 hover:bg-red-50 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
+            ) : (
+              <p className="text-sm text-gray-500 mb-4">
+                {showResolvedComments ? 'No comments found.' : 'No unresolved comments yet.'}
+              </p>
             )}
-            
+
             {/* New Comment Input */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -515,13 +858,13 @@ export default function LabelingPage() {
                 className="w-full p-3 border border-gray-300 rounded-md h-24 text-gray-900 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
             </div>
-            
+
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setShowCommentDialog(false)}
                 className="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
               >
-                Cancel
+                Close
               </button>
               <button
                 onClick={async () => {
@@ -538,7 +881,8 @@ export default function LabelingPage() {
                     if (res.ok) {
                       setHasComment(true)
                       setComment('')
-                      await loadComments()
+                      await loadComments(showResolvedComments)
+                      setShowCommentDialog(false)
                     } else {
                       console.error('Failed to save comment')
                       alert('Failed to save comment. Please try again.')

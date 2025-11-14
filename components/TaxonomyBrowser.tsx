@@ -1,5 +1,7 @@
 "use client"
 import { useState, useEffect } from 'react'
+import { Info } from 'lucide-react'
+import Tooltip from '@/components/Tooltip'
 
 export type TaxonomyNode = {
   code: number
@@ -15,6 +17,7 @@ export type SelectedLabel = {
   nodeCode: number
   taxonomyKey: string
   label?: string
+  definition?: string
   isLeaf?: boolean
 }
 
@@ -30,13 +33,17 @@ interface TaxonomyBrowserProps {
   selectedLabels: SelectedLabel[]
   onLabelsChange: (labels: SelectedLabel[]) => void
   onNavigate?: (level: number, parent: number | null) => void
+  taxonomyIndex?: number // Index of this taxonomy (0 = first, uses primary/teal color)
+  onCurrentLevelChange?: (level: number) => void // Callback to expose current level to parent
 }
 
 export default function TaxonomyBrowser({
   taxonomy,
   selectedLabels,
   onLabelsChange,
-  onNavigate
+  onNavigate,
+  taxonomyIndex = 0,
+  onCurrentLevelChange
 }: TaxonomyBrowserProps) {
   const [currentLevel, setCurrentLevel] = useState(1)
   const [currentParent, setCurrentParent] = useState<number | null>(null)
@@ -58,6 +65,81 @@ export default function TaxonomyBrowser({
     }
     return taxonomy.levelNames[level] || `Level ${level}`
   }
+
+  // Color scheme for different taxonomies (matches queue table)
+  // Index 0 uses primary/teal color, others use different colors
+  const getTaxonomyColors = (index: number) => {
+    const colors = [
+      // Index 0: Primary/Teal
+      {
+        chip: 'bg-indigo-100 text-indigo-800 border-indigo-200 hover:bg-indigo-200',
+        chipLevel: 'bg-indigo-200 text-indigo-700',
+        chipDelete: 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-200',
+        selectedBg: 'bg-indigo-50',
+        code: 'text-indigo-600',
+        codeSelected: 'text-indigo-600',
+        hoverBg: 'hover:bg-indigo-50',
+        indicator: 'text-indigo-600',
+        indicatorSelected: 'text-indigo-600'
+      },
+      // Index 1: Purple
+      {
+        chip: 'bg-purple-100 text-purple-800 border-purple-200 hover:bg-purple-200',
+        chipLevel: 'bg-purple-200 text-purple-700',
+        chipDelete: 'text-purple-600 hover:text-purple-900 hover:bg-purple-200',
+        selectedBg: 'bg-purple-50',
+        code: 'text-purple-600',
+        codeSelected: 'text-purple-600',
+        hoverBg: 'hover:bg-purple-50',
+        indicator: 'text-purple-600',
+        indicatorSelected: 'text-purple-600'
+      },
+      // Index 2: Pink
+      {
+        chip: 'bg-pink-100 text-pink-800 border-pink-200 hover:bg-pink-200',
+        chipLevel: 'bg-pink-200 text-pink-700',
+        chipDelete: 'text-pink-600 hover:text-pink-900 hover:bg-pink-200',
+        selectedBg: 'bg-pink-50',
+        code: 'text-pink-600',
+        codeSelected: 'text-pink-600',
+        hoverBg: 'hover:bg-pink-50',
+        indicator: 'text-pink-600',
+        indicatorSelected: 'text-pink-600'
+      },
+      // Index 3: Rose
+      {
+        chip: 'bg-rose-100 text-rose-800 border-rose-200 hover:bg-rose-200',
+        chipLevel: 'bg-rose-200 text-rose-700',
+        chipDelete: 'text-rose-600 hover:text-rose-900 hover:bg-rose-200',
+        selectedBg: 'bg-rose-50',
+        code: 'text-rose-600',
+        codeSelected: 'text-rose-600',
+        hoverBg: 'hover:bg-rose-50',
+        indicator: 'text-rose-600',
+        indicatorSelected: 'text-rose-600'
+      },
+      // Index 4: Orange
+      {
+        chip: 'bg-orange-100 text-orange-800 border-orange-200 hover:bg-orange-200',
+        chipLevel: 'bg-orange-200 text-orange-700',
+        chipDelete: 'text-orange-600 hover:text-orange-900 hover:bg-orange-200',
+        selectedBg: 'bg-orange-50',
+        code: 'text-orange-600',
+        codeSelected: 'text-orange-600',
+        hoverBg: 'hover:bg-orange-50',
+        indicator: 'text-orange-600',
+        indicatorSelected: 'text-orange-600'
+      }
+    ]
+    return colors[index % colors.length] || colors[0]
+  }
+
+  const colors = getTaxonomyColors(taxonomyIndex)
+
+  // Notify parent when current level changes
+  useEffect(() => {
+    onCurrentLevelChange?.(currentLevel)
+  }, [currentLevel, onCurrentLevelChange])
 
   // Toggle level names
   const toggleLevelNames = () => {
@@ -118,27 +200,55 @@ export default function TaxonomyBrowser({
     return () => clearTimeout(debounce)
   }, [taxonomy, searchQuery])
 
+  // Build full path by recursively fetching parents
+  const buildFullPath = async (node: TaxonomyNode): Promise<TaxonomyNode[]> => {
+    const path: TaxonomyNode[] = [node]
+    
+    let currentNode = node
+    while (currentNode.parentCode !== null && currentNode.parentCode !== undefined) {
+      try {
+        // Fetch all nodes at the parent's level and find the specific parent by code
+        const res = await fetch(`/api/taxonomies/${taxonomy.key}/nodes?level=${currentNode.level - 1}`)
+        if (!res.ok) break
+        
+        const data = await res.json()
+        // Find the specific parent by code
+        const parent = data.items?.find((n: TaxonomyNode) => n.code === currentNode.parentCode)
+        
+        if (!parent) break
+        
+        path.unshift(parent) // Add to beginning of array
+        currentNode = parent
+      } catch (error) {
+        console.error('Failed to fetch parent node:', error)
+        break
+      }
+    }
+    
+    return path
+  }
+
   // Handle node click
-  const handleNodeClick = (node: TaxonomyNode) => {
+  const handleNodeClick = async (node: TaxonomyNode) => {
     // Determine if this node is a leaf
     const isLeaf = node.isLeaf || node.level >= taxonomy.maxDepth
 
     // If in search mode, first we need to reconstruct the breadcrumb to this node
     // and set the selected labels accordingly
     if (searchQuery) {
-      // For now, just add this node to selected labels
-      // In a real app, you might want to fetch the full path
-      const newLabel: SelectedLabel = {
-        level: node.level,
-        nodeCode: node.code,
-        taxonomyKey: taxonomy.key,
-        label: node.label,
-        isLeaf
-      }
+      // Build the full path from root to this node
+      const fullPath = await buildFullPath(node)
       
-      // Remove any existing selections at this level or higher
-      const newLabels = selectedLabels.filter(l => l.level < node.level)
-      newLabels.push(newLabel)
+      // Convert path to selected labels
+      const newLabels: SelectedLabel[] = fullPath.map(pathNode => ({
+        level: pathNode.level,
+        nodeCode: pathNode.code,
+        taxonomyKey: taxonomy.key,
+        label: pathNode.label,
+        definition: pathNode.definition,
+        isLeaf: pathNode.isLeaf || pathNode.level >= taxonomy.maxDepth
+      }))
+      
       onLabelsChange(newLabels)
       
       // Clear search and navigate to children (if not a leaf)
@@ -147,6 +257,10 @@ export default function TaxonomyBrowser({
         setCurrentLevel(node.level + 1)
         setCurrentParent(node.code)
         onNavigate?.(node.level + 1, node.code)
+      } else {
+        // If it's a leaf, stay at this level
+        setCurrentLevel(node.level)
+        setCurrentParent(node.parentCode)
       }
     } else {
       // Normal navigation mode
@@ -155,6 +269,7 @@ export default function TaxonomyBrowser({
         nodeCode: node.code,
         taxonomyKey: taxonomy.key,
         label: node.label,
+        definition: node.definition,
         isLeaf
       }
       
@@ -270,29 +385,44 @@ export default function TaxonomyBrowser({
             ) : (
               selectedLabels
                 .sort((a, b) => a.level - b.level)
-                .map((label, i) => (
-                  <div
-                    key={i}
-                    className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-indigo-100 text-indigo-800 border border-indigo-200 cursor-pointer hover:bg-indigo-200 transition-colors"
-                    onClick={() => handleChipClick(label)}
-                  >
-                    <span className="text-xs bg-indigo-200 text-indigo-700 px-2 py-0.5 rounded">
-                      L{label.level}
-                    </span>
-                    <span className="ml-2 font-medium">
-                      {label.nodeCode === -1 ? 'Unknown' : `${label.nodeCode} - ${label.label || 'Loading...'}`}
-                    </span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleChipDelete(label)
-                      }}
-                      className="ml-2 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-200 rounded-full w-4 h-4 flex items-center justify-center"
+                .map((label, i) => {
+                  const chipContent = (
+                    <div
+                      key={i}
+                      className={`inline-flex items-center px-3 py-1 rounded-full text-sm border cursor-pointer transition-colors ${colors.chip}`}
+                      onClick={() => handleChipClick(label)}
                     >
-                      ×
-                    </button>
-                  </div>
-                ))
+                      <span className={`text-xs px-2 py-0.5 rounded ${colors.chipLevel}`}>
+                        L{label.level}
+                      </span>
+                      <span className="ml-2 font-medium">
+                        {label.nodeCode === -99 ? 'Unknown' : `${label.nodeCode} - ${label.label || 'Loading...'}`}
+                      </span>
+                      {label.definition && (
+                        <Info className="ml-1 w-3.5 h-3.5 text-gray-400 flex-shrink-0" strokeWidth={2.5} />
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleChipDelete(label)
+                        }}
+                        className={`ml-2 rounded-full w-4 h-4 flex items-center justify-center ${colors.chipDelete}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )
+
+                  if (label.definition) {
+                    return (
+                      <Tooltip key={i} content={label.definition} side="top">
+                        {chipContent}
+                      </Tooltip>
+                    )
+                  }
+
+                  return chipContent
+                })
             )}
           </div>
         </div>
@@ -363,29 +493,34 @@ export default function TaxonomyBrowser({
           ) : (
             taxonomyNodes.map((node) => {
               const isSelected = selectedLabels.some(l => l.level === node.level && l.nodeCode === node.code)
-              return (
+              const nodeContent = (
                 <div
                   key={node.code}
                   onClick={() => handleNodeClick(node)}
                   className={`px-4 py-3 cursor-pointer transition-colors border-b border-gray-100 ${
                     isSelected 
-                      ? 'bg-indigo-50' 
-                      : 'hover:bg-gray-50'
+                      ? colors.selectedBg
+                      : colors.hoverBg
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-2 flex-1 min-w-0">
                       {/* Code - fixed width for alignment */}
                       <div className={`text-[15px] font-semibold flex-shrink-0 w-12 ${
-                        isSelected ? 'text-indigo-600' : 'text-indigo-500'
+                        isSelected ? colors.codeSelected : colors.code
                       }`}>
                         {node.code}
                       </div>
                       
                       {/* Label and definition */}
                       <div className="flex-1 min-w-0">
-                        <div className="text-[15px] text-gray-900 leading-snug">
-                          {node.label}
+                        <div className="flex items-center gap-2">
+                          <div className="text-[15px] text-gray-900 leading-snug">
+                            {node.label}
+                          </div>
+                          {node.definition && (
+                            <Info className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" strokeWidth={2.5} />
+                          )}
                         </div>
                         {searchQuery && (
                           <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">
@@ -397,13 +532,24 @@ export default function TaxonomyBrowser({
                     
                     {/* Arrow/Indicator */}
                     <div className={`flex-shrink-0 text-sm ${
-                      isSelected ? 'text-indigo-600' : 'text-gray-400'
+                      isSelected ? colors.indicatorSelected : 'text-gray-400'
                     }`}>
                       {isSelected ? '✓' : (node.isLeaf ? '•' : '→')}
                     </div>
                   </div>
                 </div>
               )
+
+              // Wrap with tooltip if definition exists
+              if (node.definition) {
+                return (
+                  <Tooltip key={node.code} content={node.definition} side="right">
+                    {nodeContent}
+                  </Tooltip>
+                )
+              }
+
+              return nodeContent
             })
           )}
         </div>

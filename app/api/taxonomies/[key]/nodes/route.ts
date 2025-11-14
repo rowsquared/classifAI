@@ -34,7 +34,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ key:
       orderBy: [{ level: 'asc' }, { code: 'asc' }],
       skip: offset,
       take: limit,
-      select: { code: true, label: true, level: true, parentCode: true, isLeaf: true, taxonomyId: true },
+      select: { code: true, label: true, level: true, parentCode: true, isLeaf: true, taxonomyId: true, definition: true },
     }),
     prisma.taxonomyNode.count({ where }),
   ])

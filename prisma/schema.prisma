@@ -199,6 +199,8 @@ model Comment {
   sentenceId  String
   authorId    String
   body        String
+  resolved    Boolean  @default(false)
+  resolvedAt  DateTime?
   createdAt   DateTime @default(now())
 
   sentence    Sentence @relation(fields: [sentenceId], references: [id])

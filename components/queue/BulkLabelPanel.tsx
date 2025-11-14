@@ -10,52 +10,75 @@ interface BulkLabelPanelProps {
 }
 
 export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: BulkLabelPanelProps) {
-  const [taxonomy, setTaxonomy] = useState<Taxonomy | null>(null)
+  const [taxonomies, setTaxonomies] = useState<Taxonomy[]>([])
+  const [activeTaxonomyIndex, setActiveTaxonomyIndex] = useState(0)
   const [selectedLabels, setSelectedLabels] = useState<SelectedLabel[]>([])
   const [comment, setComment] = useState('')
   const [showCommentDialog, setShowCommentDialog] = useState(false)
   const [flagged, setFlagged] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [labelingStartedAt] = useState<Date>(new Date()) // Record when bulk panel opened
+  const [currentTaxonomyLevel, setCurrentTaxonomyLevel] = useState(1) // Current level being viewed in TaxonomyBrowser
 
-  // Load taxonomy
+  // Get active taxonomy
+  const activeTaxonomy = taxonomies[activeTaxonomyIndex] || null
+
+  // Load all active taxonomies
   useEffect(() => {
-    const loadTaxonomy = async () => {
+    const loadTaxonomies = async () => {
       try {
         const res = await fetch('/api/taxonomies/active')
         if (!res.ok) throw new Error('Failed to fetch taxonomies')
         const data = await res.json()
         if (data.ok && data.taxonomies.length > 0) {
-          const iscoTaxonomy = data.taxonomies.find((t: any) => t.key === 'ISCO')
-          if (iscoTaxonomy) {
-            setTaxonomy({
-              key: iscoTaxonomy.key,
-              displayName: iscoTaxonomy.displayName,
-              maxDepth: iscoTaxonomy.maxDepth || 5,
-              levelNames: iscoTaxonomy.levelNames
-            })
-          }
+          const loadedTaxonomies = data.taxonomies.map((t: any) => ({
+            key: t.key,
+            displayName: t.displayName,
+            maxDepth: t.maxDepth || 5,
+            levelNames: t.levelNames
+          }))
+          setTaxonomies(loadedTaxonomies)
+          setActiveTaxonomyIndex(0) // Start with first taxonomy
         }
       } catch (error) {
-        console.error('Failed to load taxonomy:', error)
+        console.error('Failed to load taxonomies:', error)
       }
     }
-    loadTaxonomy()
+    loadTaxonomies()
   }, [])
+  
+  // Handle taxonomy tab change
+  const handleTaxonomyTabChange = (index: number) => {
+    if (index < 0 || index >= taxonomies.length) return
+    setActiveTaxonomyIndex(index)
+    setCurrentTaxonomyLevel(1) // Reset to level 1 when switching taxonomies
+    setSelectedLabels([]) // Clear labels when switching tabs
+  }
 
   // Check if we have a leaf or unknown selected
   const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || l.nodeCode === -99)
 
   // Handle Unknown
   const handleUnknown = () => {
-    // Mark as unknown using special code -99
-    setSelectedLabels([{
-      level: 1,
+    // Mark current level as unknown, preserving lower level labels
+    if (!activeTaxonomy) return
+    
+    // Keep labels at levels below the current level
+    const lowerLevelLabels = selectedLabels.filter(l => 
+      l.taxonomyKey === activeTaxonomy.key && l.level < currentTaxonomyLevel
+    )
+    
+    // Add unknown at the current level
+    const unknownLabel: SelectedLabel = {
+      level: currentTaxonomyLevel,
       nodeCode: -99,
-      taxonomyKey: taxonomy?.key || 'ISCO',
+      taxonomyKey: activeTaxonomy.key,
       label: 'Unknown',
       isLeaf: true
-    }])
+    }
+    
+    // Combine: lower levels + unknown at current level
+    setSelectedLabels([...lowerLevelLabels, unknownLabel])
   }
 
   // Handle Flag - toggle and save immediately
@@ -124,7 +147,7 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
 
   // Handle Submit
   const handleSubmit = async () => {
-    if (!hasLeafOrUnknown || !taxonomy) {
+    if (!hasLeafOrUnknown || !activeTaxonomy) {
       alert('Please select a complete path or mark as unknown')
       return
     }
@@ -142,7 +165,7 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
       // Note: flags and comments are already saved immediately when clicked/entered
       const payload: any = {
         sentenceIds,
-        taxonomyKey: taxonomy.key,
+        taxonomyKey: activeTaxonomy.key,
         labelingStartedAt: labelingStartedAt.toISOString()
       }
       
@@ -161,21 +184,29 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
         throw new Error(data.error || 'Bulk label failed')
       }
 
-      onSuccess()
-      onClose()
+      // Move to next taxonomy or close if all done
+      const nextIndex = activeTaxonomyIndex + 1
+      if (nextIndex < taxonomies.length) {
+        handleTaxonomyTabChange(nextIndex)
+        setSubmitting(false)
+        // Don't close, just move to next taxonomy
+      } else {
+        // All taxonomies done, close panel
+        onSuccess()
+        onClose()
+      }
     } catch (error) {
       console.error('Failed to label sentences:', error)
       alert(error instanceof Error ? error.message : 'Failed to label sentences')
-    } finally {
       setSubmitting(false)
     }
   }
 
-  if (!taxonomy) {
+  if (taxonomies.length === 0) {
     return (
       <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
         <div className="bg-white p-6 rounded-lg">
-          <div className="text-gray-900">Loading taxonomy...</div>
+          <div className="text-gray-900">Loading taxonomies...</div>
         </div>
       </div>
     )
@@ -197,6 +228,7 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
           minWidth={30}
           maxWidth={70}
           side="right"
+          storageKey="bulk-label-panel-width"
           className="bg-white shadow-2xl flex flex-col"
           style={{ pointerEvents: 'auto' }}
         >
@@ -220,12 +252,52 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
             </button>
           </div>
 
+          {/* Taxonomy Tabs */}
+          {taxonomies.length > 1 && (
+            <div className="border-b border-gray-200 bg-gray-50">
+              <div className="flex items-center gap-1 px-4 py-2">
+                {taxonomies.map((tax, index) => {
+                  // Get tab colors based on taxonomy index (matches TaxonomyBrowser)
+                  const getTabColors = (idx: number) => {
+                    const colors = [
+                      { active: 'text-indigo-600' },  // Index 0: Primary/Teal
+                      { active: 'text-purple-600' },  // Index 1: Purple
+                      { active: 'text-pink-600' },    // Index 2: Pink
+                      { active: 'text-rose-600' },    // Index 3: Rose
+                      { active: 'text-orange-600' },  // Index 4: Orange
+                    ]
+                    return colors[idx % colors.length] || colors[0]
+                  }
+                  const tabColors = getTabColors(index)
+                  return (
+                    <button
+                      key={tax.key}
+                      onClick={() => handleTaxonomyTabChange(index)}
+                      className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                        activeTaxonomyIndex === index
+                          ? `bg-white ${tabColors.active} border-t border-l border-r border-gray-200`
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      }`}
+                    >
+                      {tax.key}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+          
           {/* Taxonomy Browser */}
-          <TaxonomyBrowser
-            taxonomy={taxonomy}
-            selectedLabels={selectedLabels}
-            onLabelsChange={setSelectedLabels}
-          />
+          {activeTaxonomy && (
+            <TaxonomyBrowser
+              key={activeTaxonomy.key} // Force remount when taxonomy changes to reset navigation state
+              taxonomy={activeTaxonomy}
+              selectedLabels={selectedLabels}
+              onLabelsChange={setSelectedLabels}
+              taxonomyIndex={activeTaxonomyIndex}
+              onCurrentLevelChange={setCurrentTaxonomyLevel}
+            />
+          )}
 
           {/* Sticky Action Buttons */}
           <div className="border-t p-4 bg-white">
