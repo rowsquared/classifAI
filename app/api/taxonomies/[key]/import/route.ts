@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 import { parse } from 'csv-parse/sync'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 const searchParamsSchema = z.object({ dryRun: z.coerce.boolean().default(true) })
 
@@ -11,11 +12,11 @@ const emptyToNull = (v: unknown) => {
 }
 
 const rowSchema = z.object({
-  id: z.coerce.number().int(),
+  id: z.string().min(1),
   label: z.string().min(1),
   definition: z.string().optional().nullable(),
   synonyms: z.string().optional().nullable(),
-  parent_id: z.preprocess(emptyToNull, z.coerce.number().int().nullable()).optional().nullable(),
+  parent_id: z.preprocess(emptyToNull, z.string().min(1).nullable()).optional().nullable(),
   level: z.preprocess(emptyToNull, z.coerce.number().int().min(1).max(5).nullable()).optional().nullable(),
 })
 
@@ -41,7 +42,7 @@ export async function POST(
   const records = parse(csv, { columns: true, skip_empty_lines: true, bom: true }) as any[]
 
   const errors: { row: number; message: string }[] = []
-  const seenIds = new Set<number>()
+  const seenIds = new Set<string>()
   const seenLabelsPerLevel = new Map<number, Set<string>>()
   const nodes: Array<z.infer<typeof rowSchema>> = []
 
@@ -56,13 +57,13 @@ export async function POST(
     const row = parsed.data
     
     // Validate that code is not -99 (reserved for UNKNOWN)
-    if (row.id === -99) {
+    if (row.id === UNKNOWN_NODE_CODE) {
       errors.push({ row: idx + 2, message: 'Code -99 is reserved for UNKNOWN labels and cannot be used' })
       return
     }
     
     // Validate that parent_id is not -99
-    if (row.parent_id === -99) {
+    if (row.parent_id === UNKNOWN_NODE_CODE) {
       errors.push({ row: idx + 2, message: 'Code -99 is reserved for UNKNOWN labels and cannot be used as parent_id' })
       return
     }
@@ -182,7 +183,7 @@ function inferLevel(n: any, all: any[]) {
 }
 
 function buildPath(n: any, all: any[]) {
-  const parts: number[] = []
+  const parts: string[] = []
   let cur = n
   while (cur) {
     parts.push(cur.id)

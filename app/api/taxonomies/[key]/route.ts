@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { parse } from 'csv-parse/sync'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { callAILabelingEndpoint, ensureAIConfig } from '@/lib/ai-labeling'
 
 export async function PUT(
   req: NextRequest,
@@ -141,14 +143,25 @@ export async function PUT(
         })
 
         // Create new nodes
-        const nodes = finalRecords.map((record) => ({
-          taxonomyId: existingTaxonomy.id,
-          code: parseInt(String(record.id).trim()),
-          level: parseInt(String(record.level).trim()),
-          label: String(record.label || '').trim(),
-          definition: String(record.definition || '').trim(),
-          parentCode: record.parent_id && String(record.parent_id).trim() ? parseInt(String(record.parent_id).trim()) : null
-        }))
+        const nodes = finalRecords.map((record) => {
+          const code = String(record.id).trim()
+          const parentCode = record.parent_id && String(record.parent_id).trim()
+            ? String(record.parent_id).trim()
+            : null
+
+          if (code === UNKNOWN_NODE_CODE || parentCode === UNKNOWN_NODE_CODE) {
+            throw new Error('Code -99 is reserved for UNKNOWN labels')
+          }
+
+          return {
+            taxonomyId: existingTaxonomy.id,
+            code,
+            level: parseInt(String(record.level).trim()),
+            label: String(record.label || '').trim(),
+            definition: String(record.definition || '').trim(),
+            parentCode
+          }
+        })
 
         await tx.taxonomyNode.createMany({ data: nodes })
 
@@ -161,7 +174,7 @@ export async function PUT(
             synonymsList.forEach(synonym => {
               synonymsToCreate.push({
                 taxonomyId: existingTaxonomy.id,
-                nodeCode: parseInt(String(record.id).trim()),
+                nodeCode: String(record.id).trim(),
                 synonym
               })
             })
@@ -214,6 +227,16 @@ export async function DELETE(
             annotations: true
           }
         }
+      },
+      select: {
+        id: true,
+        key: true,
+        _count: {
+          select: { 
+            nodes: true,
+            annotations: true
+          }
+        }
       }
     })
 
@@ -229,6 +252,34 @@ export async function DELETE(
       where: { key },
       data: { isActive: false }
     })
+
+    try {
+      ensureAIConfig()
+      await callAILabelingEndpoint('/taxonomies', {
+        action: 'delete',
+        taxonomy: {
+          key: deletedTaxonomy.key
+        }
+      })
+      await prisma.taxonomy.update({
+        where: { id: deletedTaxonomy.id },
+        data: {
+          lastAISyncAt: new Date(),
+          lastAISyncStatus: 'deleted',
+          lastAISyncError: null
+        }
+      })
+    } catch (syncError) {
+      console.error('Failed to notify AI service about taxonomy deletion:', syncError)
+      await prisma.taxonomy.update({
+        where: { id: deletedTaxonomy.id },
+        data: {
+          lastAISyncAt: new Date(),
+          lastAISyncStatus: 'delete_failed',
+          lastAISyncError: syncError instanceof Error ? syncError.message : String(syncError)
+        }
+      })
+    }
 
     return NextResponse.json({ 
       ok: true, 

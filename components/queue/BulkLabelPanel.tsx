@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import TaxonomyBrowser, { type Taxonomy, type SelectedLabel } from '../TaxonomyBrowser'
 import ResizablePanel from '../ResizablePanel'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 interface BulkLabelPanelProps {
   sentenceIds: string[]
@@ -56,7 +57,7 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
   }
 
   // Check if we have a leaf or unknown selected
-  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || l.nodeCode === -99)
+  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || l.nodeCode === UNKNOWN_NODE_CODE)
 
   // Handle Unknown
   const handleUnknown = () => {
@@ -71,7 +72,7 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
     // Add unknown at the current level
     const unknownLabel: SelectedLabel = {
       level: currentTaxonomyLevel,
-      nodeCode: -99,
+      nodeCode: UNKNOWN_NODE_CODE,
       taxonomyKey: activeTaxonomy.key,
       label: 'Unknown',
       isLeaf: true

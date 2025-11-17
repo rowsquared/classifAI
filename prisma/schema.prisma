@@ -46,6 +46,7 @@ model User {
   imports             SentenceImport[]
   editedSentences     Sentence[] @relation("LastEditor")
   assignedSentences   SentenceAssignment[]
+  aiLabelingJobs      AILabelingJob[]
 }
 
 model Taxonomy {
@@ -59,11 +60,18 @@ model Taxonomy {
   createdById  String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  lastAISyncAt DateTime?
+  lastAISyncStatus String?
+  lastAISyncError String?
+  lastLearningAt DateTime?
+  newAnnotationsSinceLastLearning Int @default(0)
 
   nodes        TaxonomyNode[]
   synonyms     TaxonomySynonym[]
   annotations  SentenceAnnotation[]
   settings     TaxonomySetting?
+  aiSuggestions SentenceAISuggestion[]
+  aiLabelingJobs AILabelingJob[]
 }
 
 model TaxonomySetting {
@@ -74,12 +82,12 @@ model TaxonomySetting {
 }
 
 model TaxonomyNode {
-  code         Int
+  code         String
   id           String  @id @default(cuid())
   taxonomyId   String
   label        String
   definition   String?
-  parentCode   Int?
+  parentCode   String?
   level        Int
   path         String?
   isLeaf       Boolean?
@@ -166,6 +174,7 @@ model Sentence {
   annotations    SentenceAnnotation[]
   comments       Comment[]
   assignments    SentenceAssignment[]
+  aiSuggestions  SentenceAISuggestion[]
   
   @@index([importId])
   @@index([status])
@@ -179,11 +188,12 @@ model SentenceAnnotation {
   sentenceId        String
   taxonomyId        String
   level             Int
-  nodeCode          Int       // -99 = unknown
+  nodeCode          String    // '-99' = unknown
   source            AnnotationSource
   createdById       String?
   labelingStartedAt DateTime? // When labeling session started
   createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   sentence     Sentence @relation(fields: [sentenceId], references: [id])
   taxonomy     Taxonomy @relation(fields: [taxonomyId], references: [id])
@@ -192,6 +202,56 @@ model SentenceAnnotation {
   @@index([sentenceId, taxonomyId, level])
   @@index([nodeCode])
   @@index([createdById, createdAt])
+}
+
+enum AILabelingJobStatus {
+  pending
+  processing
+  completed
+  failed
+  cancelled
+}
+
+model SentenceAISuggestion {
+  id              String   @id @default(cuid())
+  sentenceId      String
+  taxonomyId      String
+  level           Int
+  nodeCode        String
+  confidenceScore Float
+  suggestedAt     DateTime @default(now())
+
+  sentence Sentence @relation(fields: [sentenceId], references: [id], onDelete: Cascade)
+  taxonomy Taxonomy @relation(fields: [taxonomyId], references: [id], onDelete: Cascade)
+
+  @@unique([sentenceId, taxonomyId, level])
+  @@index([sentenceId])
+  @@index([taxonomyId, nodeCode])
+  @@index([confidenceScore])
+  @@index([suggestedAt])
+}
+
+model AILabelingJob {
+  id                 String               @id @default(cuid())
+  createdById        String
+  taxonomyId         String
+  status             AILabelingJobStatus  @default(pending)
+  totalSentences     Int
+  processedSentences Int                  @default(0)
+  failedSentences    Int                  @default(0)
+  batchSize          Int                  @default(100)
+  filterCriteria     Json?
+  startedAt          DateTime             @default(now())
+  completedAt        DateTime?
+  errorMessage       String?
+
+  createdBy User @relation(fields: [createdById], references: [id])
+  taxonomy  Taxonomy @relation(fields: [taxonomyId], references: [id])
+
+  @@index([status])
+  @@index([createdById])
+  @@index([taxonomyId])
+  @@index([startedAt])
 }
 
 model Comment {

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 type Annotation = {
   id: string
   level: number
-  nodeCode: number
+  nodeCode: string
   nodeLabel?: string | null
   source: 'user' | 'ai'
   taxonomy: {

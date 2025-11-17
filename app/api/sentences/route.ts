@@ -159,7 +159,7 @@ export async function GET(request: Request) {
         annotationFilter.some.level = parseInt(level, 10)
       }
       if (code) {
-        annotationFilter.some.nodeCode = parseInt(code, 10)
+        annotationFilter.some.nodeCode = code
       }
       if (source) {
         annotationFilter.some.source = source as any

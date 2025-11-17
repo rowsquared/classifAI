@@ -16,6 +16,13 @@ NEXTAUTH_SECRET="your-secret-key-change-this-in-production"
 DEFAULT_ADMIN_EMAIL="admin@hitlann.local"
 DEFAULT_ADMIN_PASSWORD="change-this-password-immediately"
 DEFAULT_ADMIN_NAME="System Administrator"
+
+# AI Labeling Service (optional but required for AI features)
+AI_LABELING_API_URL="https://your-ai-service.example.com"
+AI_LABELING_API_KEY="your-ai-service-api-key"
+AI_LABELING_BATCH_SIZE=100
+AI_LEARNING_BATCH_SIZE=100
+AI_LEARNING_MIN_NEW_ANNOTATIONS=500
 ```
 
 ## Generating a Secure Secret

@@ -35,7 +35,7 @@ type Sentence = {
   annotations: Array<{
     id: string
     level: number
-    nodeCode: number
+    nodeCode: string
     nodeLabel?: string | null
     source: 'user' | 'ai'
     taxonomy: { key: string; displayName: string }
@@ -375,7 +375,7 @@ export default function QueuePage() {
   }
 
   // Handle bulk label
-  const handleBulkLabel = async (taxonomyKey: string, annotations: Array<{ level: number; nodeCode: number }>) => {
+  const handleBulkLabel = async (taxonomyKey: string, annotations: Array<{ level: number; nodeCode: string }>) => {
     try {
       const res = await fetch('/api/sentences/bulk-label', {
         method: 'POST',

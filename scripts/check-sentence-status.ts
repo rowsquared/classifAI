@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 const prisma = new PrismaClient()
 
@@ -57,7 +58,7 @@ async function checkSentenceStatus(sentenceId: string) {
     }
     
     // Check for unknown
-    const hasUnknown = taxAnnotations.some(ann => ann.nodeCode === -99)
+    const hasUnknown = taxAnnotations.some(ann => ann.nodeCode === UNKNOWN_NODE_CODE)
     if (hasUnknown) {
       console.log(`    ✓ Has unknown (-99)`)
       continue

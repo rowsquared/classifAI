@@ -2,19 +2,20 @@
 import { useState, useEffect } from 'react'
 import { Info } from 'lucide-react'
 import Tooltip from '@/components/Tooltip'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 export type TaxonomyNode = {
-  code: number
+  code: string
   label: string
   level: number
-  parentCode: number | null
+  parentCode: string | null
   isLeaf: boolean
   definition?: string
 }
 
 export type SelectedLabel = {
   level: number
-  nodeCode: number
+  nodeCode: string
   taxonomyKey: string
   label?: string
   definition?: string
@@ -32,7 +33,7 @@ interface TaxonomyBrowserProps {
   taxonomy: Taxonomy
   selectedLabels: SelectedLabel[]
   onLabelsChange: (labels: SelectedLabel[]) => void
-  onNavigate?: (level: number, parent: number | null) => void
+  onNavigate?: (level: number, parent: string | null) => void
   taxonomyIndex?: number // Index of this taxonomy (0 = first, uses primary/teal color)
   onCurrentLevelChange?: (level: number) => void // Callback to expose current level to parent
 }
@@ -46,7 +47,7 @@ export default function TaxonomyBrowser({
   onCurrentLevelChange
 }: TaxonomyBrowserProps) {
   const [currentLevel, setCurrentLevel] = useState(1)
-  const [currentParent, setCurrentParent] = useState<number | null>(null)
+  const [currentParent, setCurrentParent] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [taxonomyNodes, setTaxonomyNodes] = useState<TaxonomyNode[]>([])
   const [breadcrumb, setBreadcrumb] = useState<TaxonomyNode[]>([])
@@ -160,7 +161,7 @@ export default function TaxonomyBrowser({
           level: String(currentLevel)
         })
         if (currentParent !== null) {
-          params.set('parentCode', String(currentParent))
+          params.set('parentCode', currentParent)
         }
 
         const res = await fetch(`/api/taxonomies/${taxonomy.key}/nodes?${params}`)
@@ -396,7 +397,7 @@ export default function TaxonomyBrowser({
                         L{label.level}
                       </span>
                       <span className="ml-2 font-medium">
-                        {label.nodeCode === -99 ? 'Unknown' : `${label.nodeCode} - ${label.label || 'Loading...'}`}
+                        {label.nodeCode === UNKNOWN_NODE_CODE ? 'Unknown' : `${label.nodeCode} - ${label.label || 'Loading...'}`}
                       </span>
                       {label.definition && (
                         <Info className="ml-1 w-3.5 h-3.5 text-gray-400 flex-shrink-0" strokeWidth={2.5} />

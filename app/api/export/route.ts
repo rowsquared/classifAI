@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { auth } from '@/lib/auth'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 /**
  * GET /api/export?status=...&dateRange=...
@@ -182,8 +183,8 @@ export async function GET(req: NextRequest) {
           )
           
           if (annotation) {
-            // Handle -99 as UNKNOWN
-            const code = annotation.nodeCode === -99 ? 'UNKNOWN' : String(annotation.nodeCode)
+            // Handle '-99' as UNKNOWN
+            const code = annotation.nodeCode === UNKNOWN_NODE_CODE ? 'UNKNOWN' : String(annotation.nodeCode)
             row.push(code)
           } else {
             row.push('') // No annotation for this level

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { parse } from 'csv-parse/sync'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 const MAX_ACTIVE_TAXONOMIES = 3
 
@@ -64,8 +65,11 @@ export async function GET(req: NextRequest) {
       })
     )
 
+    const learningThreshold = parseInt(process.env.AI_LEARNING_MIN_NEW_ANNOTATIONS || '500', 10)
+
     return NextResponse.json({ 
       ok: true, 
+      learningThreshold,
       taxonomies: taxonomiesWithStats 
     })
   } catch (error) {
@@ -160,8 +164,8 @@ export async function POST(req: NextRequest) {
 
     // Validate that no code is -99 (reserved for UNKNOWN)
     for (const record of records) {
-      const code = parseInt(String(record.id).trim())
-      if (code === -99) {
+      const code = String(record.id).trim()
+      if (code === UNKNOWN_NODE_CODE) {
         return NextResponse.json({ 
           ok: false, 
           error: 'Code -99 is reserved for UNKNOWN labels and cannot be used in taxonomy imports' 
@@ -170,8 +174,8 @@ export async function POST(req: NextRequest) {
       
       // Also check parent_id
       if (record.parent_id && String(record.parent_id).trim()) {
-        const parentCode = parseInt(String(record.parent_id).trim())
-        if (parentCode === -99) {
+        const parentCode = String(record.parent_id).trim()
+        if (parentCode === UNKNOWN_NODE_CODE) {
           return NextResponse.json({ 
             ok: false, 
             error: 'Code -99 is reserved for UNKNOWN labels and cannot be used as a parent_id' 
@@ -249,14 +253,21 @@ export async function POST(req: NextRequest) {
       })
 
       // Create nodes
-      const nodes = finalRecords.map((record) => ({
-        taxonomyId: taxonomy.id,
-        code: parseInt(String(record.id).trim()),
-        level: parseInt(String(record.level).trim()),
-        label: String(record.label || '').trim(),
-        definition: String(record.definition || '').trim(),
-        parentCode: record.parent_id && String(record.parent_id).trim() ? parseInt(String(record.parent_id).trim()) : null
-      }))
+      const nodes = finalRecords.map((record) => {
+        const code = String(record.id).trim()
+        const parentCode = record.parent_id && String(record.parent_id).trim()
+          ? String(record.parent_id).trim()
+          : null
+
+        return {
+          taxonomyId: taxonomy.id,
+          code,
+          level: parseInt(String(record.level).trim()),
+          label: String(record.label || '').trim(),
+          definition: String(record.definition || '').trim(),
+          parentCode
+        }
+      })
 
       await tx.taxonomyNode.createMany({ data: nodes })
 
@@ -269,7 +280,7 @@ export async function POST(req: NextRequest) {
             synonymsList.forEach(synonym => {
               synonymsToCreate.push({
                 taxonomyId: taxonomy.id,
-                nodeCode: parseInt(String(record.id).trim()),
+                nodeCode: String(record.id).trim(),
                 synonym
               })
             })

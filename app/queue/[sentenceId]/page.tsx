@@ -6,6 +6,7 @@ import PageHeader from '@/components/PageHeader'
 import TaxonomyBrowser, { type Taxonomy, type SelectedLabel } from '@/components/TaxonomyBrowser'
 import ResizablePanel from '@/components/ResizablePanel'
 import { formatFieldName } from '@/lib/utils'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 type Sentence = {
   id: string
@@ -26,7 +27,7 @@ type Sentence = {
   lastEditedAt: string | null
   annotations: Array<{
     level: number
-    nodeCode: number
+    nodeCode: string
     nodeLabel?: string
     nodeDefinition?: string | null
     isLeaf?: boolean
@@ -239,7 +240,7 @@ export default function LabelingPage() {
   }
 
   // Check if we have a leaf or unknown selected
-  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || l.nodeCode === -99)
+  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || l.nodeCode === UNKNOWN_NODE_CODE)
 
   // Handle Unknown
   const handleUnknown = () => {
@@ -254,7 +255,7 @@ export default function LabelingPage() {
     // Add unknown at the current level
     const unknownLabel: SelectedLabel = {
       level: currentTaxonomyLevel,
-      nodeCode: -99,
+      nodeCode: UNKNOWN_NODE_CODE,
       taxonomyKey: activeTaxonomy.key,
       label: 'Unknown',
       isLeaf: true

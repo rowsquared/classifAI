@@ -15,17 +15,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ key:
 
   const where: any = { taxonomyId: taxonomy.id }
   if (parentCodeRaw !== null) {
-    where.parentCode = parentCodeRaw === '' ? null : Number(parentCodeRaw)
+    where.parentCode = parentCodeRaw === '' ? null : parentCodeRaw
   }
   if (levelRaw !== null) {
     where.level = Number(levelRaw)
   }
   if (q) {
-    const n = Number.isFinite(Number(q)) ? Number(q) : undefined
     where.OR = [
-      n !== undefined ? { code: n } : undefined,
+      { code: q },
       { label: { contains: q, mode: 'insensitive' } },
-    ].filter(Boolean)
+    ]
   }
 
   const [items, total] = await Promise.all([

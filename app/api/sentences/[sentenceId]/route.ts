@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 export async function GET(
   req: NextRequest,
@@ -42,7 +43,7 @@ export async function GET(
 
     // Fetch labels for annotations (including handling unknown/-99)
     // Optimize: fetch all nodes in one query instead of N queries
-    const annotationsToLookup = sentence.annotations.filter(ann => ann.nodeCode !== -99)
+    const annotationsToLookup = sentence.annotations.filter(ann => ann.nodeCode !== UNKNOWN_NODE_CODE)
     
     // Build lookup map: (taxonomyId, code) -> node
     const nodeLookup = new Map<string, { label: string; definition: string | null; isLeaf: boolean | null }>()
@@ -60,7 +61,7 @@ export async function GET(
             const [taxonomyId, code] = key.split(':')
             return {
               taxonomyId,
-              code: parseInt(code, 10)
+              code
             }
           })
         },
@@ -85,7 +86,7 @@ export async function GET(
     
     // Map annotations with labels
     const annotationsWithLabels = sentence.annotations.map((ann) => {
-      if (ann.nodeCode === -99) {
+      if (ann.nodeCode === UNKNOWN_NODE_CODE) {
         return {
           ...ann,
           nodeLabel: 'Unknown'

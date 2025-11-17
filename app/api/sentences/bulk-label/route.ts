@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { auth } from '@/lib/auth'
 import { z } from 'zod'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 const bulkLabelSchema = z.object({
   sentenceIds: z.array(z.string()).min(1),
   taxonomyKey: z.string().min(1),
   annotations: z.array(z.object({
     level: z.number().int().min(1).max(5),
-    nodeCode: z.number().int()
+    nodeCode: z.union([z.string(), z.number()])
   })).optional(),
   flagged: z.boolean().optional(),
   comment: z.string().optional(),
@@ -38,6 +39,10 @@ export async function POST(req: NextRequest) {
     }
     
     const { sentenceIds, taxonomyKey, annotations, flagged, comment, labelingStartedAt } = validation.data
+    const normalizedAnnotations = annotations?.map(ann => ({
+      ...ann,
+      nodeCode: String(ann.nodeCode)
+    }))
     
     // Verify taxonomy exists
     const taxonomy = await prisma.taxonomy.findUnique({
@@ -53,8 +58,8 @@ export async function POST(req: NextRequest) {
     
     // Verify all node codes exist (if annotations provided)
     // Note: -99 is the special code for "unknown" and won't exist in taxonomyNode
-    if (annotations && annotations.length > 0) {
-      const nodeCodes = annotations.map(a => a.nodeCode).filter(c => c !== -99)
+    if (normalizedAnnotations && normalizedAnnotations.length > 0) {
+      const nodeCodes = normalizedAnnotations.map(a => a.nodeCode).filter(c => c !== UNKNOWN_NODE_CODE)
       
       if (nodeCodes.length > 0) {
         const nodes = await prisma.taxonomyNode.findMany({
@@ -86,7 +91,7 @@ export async function POST(req: NextRequest) {
       // For each sentence
       for (const sentenceId of sentenceIds) {
         // Delete existing annotations for this taxonomy (if annotations provided)
-        if (annotations && annotations.length > 0) {
+        if (normalizedAnnotations && normalizedAnnotations.length > 0) {
           await tx.sentenceAnnotation.deleteMany({
             where: {
               sentenceId,
@@ -96,12 +101,12 @@ export async function POST(req: NextRequest) {
           
           // Create new annotations (including -99 for unknown)
           await tx.sentenceAnnotation.createMany({
-            data: annotations.map(ann => {
+            data: normalizedAnnotations.map(ann => {
               const baseData: any = {
                 sentenceId,
                 taxonomyId: taxonomy.id,
                 level: ann.level,
-                nodeCode: ann.nodeCode, // -99 for unknown
+                nodeCode: ann.nodeCode, // '-99' for unknown
                 source: 'user' as const
               }
               
@@ -147,6 +152,17 @@ export async function POST(req: NextRequest) {
       }
     })
     
+    if (normalizedAnnotations && normalizedAnnotations.length > 0) {
+      await prisma.taxonomy.update({
+        where: { id: taxonomy.id },
+        data: {
+          newAnnotationsSinceLastLearning: {
+            increment: normalizedAnnotations.length * sentenceIds.length
+          }
+        }
+      })
+    }
+
     return NextResponse.json({
       ok: true,
       labeled: sentenceIds.length,

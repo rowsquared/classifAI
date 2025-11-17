@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
+import { UNKNOWN_NODE_CODE } from '@/lib/constants'
 
 const annotationSchema = z.object({
   annotations: z.array(z.object({
     level: z.number(),
-    nodeCode: z.number(),
+    nodeCode: z.union([z.string(), z.number()]),
     taxonomyKey: z.string()
   })),
   status: z.enum(['pending', 'submitted', 'skipped', 'escalated']),
@@ -21,7 +22,18 @@ export async function POST(
   try {
     const { sentenceId } = await params
     const body = await req.json()
-    const { annotations, status, flagged, comment, labelingStartedAt } = annotationSchema.parse(body)
+    const {
+      annotations: rawAnnotations,
+      status,
+      flagged,
+      comment,
+      labelingStartedAt
+    } = annotationSchema.parse(body)
+
+    const annotations = rawAnnotations.map(ann => ({
+      ...ann,
+      nodeCode: String(ann.nodeCode)
+    }))
 
     // Get taxonomy ID from the first annotation (all annotations should be for the same taxonomy)
     let taxonomy = null
@@ -64,13 +76,13 @@ export async function POST(
         const startTime = labelingStartedAt ? new Date(labelingStartedAt) : null
         
         for (const annotation of annotations) {
-          // Now we store -99 for unknown (not -1)
+          // Now we store '-99' for unknown (not -1)
           await tx.sentenceAnnotation.create({
             data: {
               sentenceId: sentenceId,
               taxonomyId: taxonomy.id,
               level: annotation.level,
-              nodeCode: annotation.nodeCode, // -99 for unknown
+              nodeCode: annotation.nodeCode, // '-99' for unknown
               source: 'user',
               labelingStartedAt: startTime
             }
@@ -153,6 +165,17 @@ export async function POST(
         return taxAnnotations.length > 0
       })
       .map(t => t.key)
+
+    if (taxonomy && annotations.length > 0) {
+      await prisma.taxonomy.update({
+        where: { id: taxonomy.id },
+        data: {
+          newAnnotationsSinceLastLearning: {
+            increment: annotations.length
+          }
+        }
+      })
+    }
 
     return NextResponse.json({ 
       success: true,
