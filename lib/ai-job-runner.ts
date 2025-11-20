@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { callAILabelingEndpoint, ensureAIConfig } from './ai-labeling'
+import { startAIJob, waitForAIJobResult } from './ai-labeling'
 import { AI_LABELING_BATCH_SIZE } from './constants'
 import { buildFieldMap } from './ai-utils'
 
@@ -15,8 +15,6 @@ const globalAny = globalThis as typeof globalThis & {
 }
 
 async function processJobsLoop() {
-  ensureAIConfig()
-
   while (true) {
     const job = await prisma.aILabelingJob.findFirst({
       where: {
@@ -187,18 +185,22 @@ async function processSingleJob(jobId: string) {
     }
 
     try {
-      const response = await callAILabelingEndpoint<{
-        batchId?: string
+      const jobHandle = await startAIJob('/label', {
+        taxonomyKey: job.taxonomy.key,
+        batchId: `${job.id}-${Math.floor(offset / AI_LABELING_BATCH_SIZE)}`,
+        sentences: payloadSentences
+      })
+      const result = await waitForAIJobResult(jobHandle, `/label/${jobHandle}/status`)
+      if (!result.success) {
+        throw new Error(result.error || result.data?.error || 'AI labeling job failed')
+      }
+      const response = (result.data?.result || result.data) as {
         suggestions?: Array<{
           sentenceId: string
           annotations: Array<{ level: number; nodeCode: string | number; confidence?: number }>
         }>
         errors?: Array<{ sentenceId?: string; error?: string }>
-      }>('/label', {
-        taxonomyKey: job.taxonomy.key,
-        batchId: `${job.id}-${Math.floor(offset / AI_LABELING_BATCH_SIZE)}`,
-        sentences: payloadSentences
-      })
+      }
 
       const suggestionMap = new Map<string, { annotations: Array<{ level: number; nodeCode: string; confidence: number }> }>()
       for (const suggestion of response.suggestions || []) {

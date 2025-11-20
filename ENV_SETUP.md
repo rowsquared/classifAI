@@ -19,10 +19,11 @@ DEFAULT_ADMIN_NAME="System Administrator"
 
 # AI Labeling Service (optional but required for AI features)
 AI_LABELING_API_URL="https://your-ai-service.example.com"
-AI_LABELING_API_KEY="your-ai-service-api-key"
 AI_LABELING_BATCH_SIZE=100
 AI_LEARNING_BATCH_SIZE=100
 AI_LEARNING_MIN_NEW_ANNOTATIONS=500
+AI_JOB_POLL_INTERVAL_MS=5000
+AI_JOB_POLL_TIMEOUT_MS=600000
 ```
 
 ## Generating a Secure Secret

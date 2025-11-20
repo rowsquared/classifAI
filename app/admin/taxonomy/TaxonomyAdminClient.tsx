@@ -1,31 +1,9 @@
-import { redirect } from 'next/navigation'
-import { auth } from '@/lib/auth'
-import { serverFetchJSON } from '@/lib/server-fetch'
-import TaxonomyAdminClient, { type Taxonomy } from './TaxonomyAdminClient'
-
-export default async function TaxonomyAdminPage() {
-  const session = await auth()
-  if (!session?.user || session.user.role !== 'admin') {
-    redirect('/queue')
-  }
-
-  const data = await serverFetchJSON<{ ok: boolean; taxonomies: Taxonomy[]; learningThreshold?: number }>(
-    '/api/taxonomies?includeDeleted=true'
-  )
-
-  return (
-    <TaxonomyAdminClient
-      initialTaxonomies={data?.taxonomies ?? []}
-      initialLearningThreshold={data?.learningThreshold ?? 500}
-    />
-  )
-}
 "use client"
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import PageHeader from '@/components/PageHeader'
 import { formatRelativeTime } from '@/lib/utils'
 
-type Taxonomy = {
+export type Taxonomy = {
   id: string
   key: string
   displayName: string
@@ -54,13 +32,18 @@ type Taxonomy = {
   newAnnotationsSinceLastLearning: number
 }
 
+type Props = {
+  initialTaxonomies: Taxonomy[]
+  initialLearningThreshold: number
+}
+
 const MAX_ACTIVE_TAXONOMIES = 3
 
-export default function TaxonomyAdminPage() {
-  const [taxonomies, setTaxonomies] = useState<Taxonomy[]>([])
-  const [loading, setLoading] = useState(true)
+export default function TaxonomyAdminClient({ initialTaxonomies, initialLearningThreshold }: Props) {
+  const [taxonomies, setTaxonomies] = useState<Taxonomy[]>(initialTaxonomies)
+  const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [learningThreshold, setLearningThreshold] = useState(500)
+  const [learningThreshold, setLearningThreshold] = useState(initialLearningThreshold)
   
   // Modal states
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -82,10 +65,6 @@ export default function TaxonomyAdminPage() {
   const [submitting, setSubmitting] = useState(false)
   const [syncingKeys, setSyncingKeys] = useState<Set<string>>(new Set())
   const [learningKeys, setLearningKeys] = useState<Set<string>>(new Set())
-
-  useEffect(() => {
-    loadTaxonomies()
-  }, [])
 
   async function loadTaxonomies() {
     try {

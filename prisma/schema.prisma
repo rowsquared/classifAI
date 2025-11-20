@@ -63,7 +63,11 @@ model Taxonomy {
   lastAISyncAt DateTime?
   lastAISyncStatus String?
   lastAISyncError String?
+  lastAISyncJobId String?
   lastLearningAt DateTime?
+  lastLearningJobId String?
+  lastLearningStatus String?
+  lastLearningError String?
   newAnnotationsSinceLastLearning Int @default(0)
 
   nodes        TaxonomyNode[]

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { callAILabelingEndpoint, ensureAIConfig } from '@/lib/ai-labeling'
+import { startAIJob, monitorAIJob } from '@/lib/ai-labeling'
 import { z } from 'zod'
-import { AI_LEARNING_BATCH_SIZE, AI_LEARNING_MIN_NEW_ANNOTATIONS } from '@/lib/constants'
+import { AI_LEARNING_MIN_NEW_ANNOTATIONS } from '@/lib/constants'
 import { buildFieldMap } from '@/lib/ai-utils'
 
 const learnSchema = z.object({
@@ -19,8 +19,6 @@ export async function POST(req: NextRequest) {
     if (!session?.user || session.user.role !== 'admin') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-
-    ensureAIConfig()
 
     const body = await req.json()
     const { taxonomyKey, sentenceIds, importIds, onlyUnsubmitted } = learnSchema.parse(body)
@@ -112,30 +110,46 @@ export async function POST(req: NextRequest) {
     }
 
     const sentencesPayload = Array.from(sentencesMap.values())
-    const batchSize = AI_LEARNING_BATCH_SIZE
-    let batchesSent = 0
-
-    for (let i = 0; i < sentencesPayload.length; i += batchSize) {
-      const batch = sentencesPayload.slice(i, i + batchSize)
-      await callAILabelingEndpoint('/learn', {
-        taxonomyKey: taxonomy.key,
-        sentences: batch
-      })
-      batchesSent++
-    }
+    const jobId = await startAIJob('/learn', {
+      taxonomyKey: taxonomy.key,
+      sentences: sentencesPayload
+    })
 
     await prisma.taxonomy.update({
       where: { id: taxonomy.id },
       data: {
-        lastLearningAt: new Date(),
-        newAnnotationsSinceLastLearning: 0
+        lastLearningJobId: jobId,
+        lastLearningStatus: 'pending',
+        lastLearningError: null
+      }
+    })
+
+    monitorAIJob(jobId, `/learn/${jobId}/status`, async (result) => {
+      if (result.success) {
+        await prisma.taxonomy.update({
+          where: { id: taxonomy.id },
+          data: {
+            lastLearningStatus: 'completed',
+            lastLearningAt: new Date(),
+            lastLearningError: null,
+            newAnnotationsSinceLastLearning: 0
+          }
+        })
+      } else {
+        await prisma.taxonomy.update({
+          where: { id: taxonomy.id },
+          data: {
+            lastLearningStatus: 'failed',
+            lastLearningError: result.error || result.data?.error || 'AI learning job failed'
+          }
+        })
       }
     })
 
     return NextResponse.json({
       ok: true,
-      sent: sentencesPayload.length,
-      batches: batchesSent
+      jobId,
+      sentences: sentencesPayload.length
     })
   } catch (error: any) {
     console.error('AI learning error:', error)

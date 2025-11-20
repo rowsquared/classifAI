@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { callAILabelingEndpoint, ensureAIConfig } from '@/lib/ai-labeling'
+import { startAIJob, monitorAIJob } from '@/lib/ai-labeling'
 
 export async function POST(
   req: NextRequest,
@@ -12,8 +12,6 @@ export async function POST(
     if (!session?.user || session.user.role !== 'admin') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-
-    ensureAIConfig()
 
     const { key } = await params
     const taxonomy = await prisma.taxonomy.findUnique({
@@ -73,40 +71,39 @@ export async function POST(
       }
     }
 
-    await callAILabelingEndpoint('/taxonomies', payload)
+    const jobId = await startAIJob('/taxonomies', payload)
 
     await prisma.taxonomy.update({
       where: { id: taxonomy.id },
       data: {
+        lastAISyncJobId: jobId,
         lastAISyncAt: new Date(),
-        lastAISyncStatus: 'success',
+        lastAISyncStatus: 'pending',
         lastAISyncError: null
       }
     })
 
-    return NextResponse.json({ ok: true })
+    monitorAIJob(jobId, `/taxonomies/${jobId}/status`, async (result) => {
+      const data: Record<string, any> = result.success
+        ? {
+            lastAISyncStatus: 'success',
+            lastAISyncAt: new Date(),
+            lastAISyncError: null
+          }
+        : {
+            lastAISyncStatus: 'failed',
+            lastAISyncAt: new Date(),
+            lastAISyncError: result.error || result.data?.error || 'Unknown AI sync failure'
+          }
+      await prisma.taxonomy.update({
+        where: { id: taxonomy.id },
+        data
+      })
+    })
+
+    return NextResponse.json({ ok: true, jobId })
   } catch (error: any) {
     console.error('Failed to sync taxonomy with AI:', error)
-    if (error?.message && error.message.includes('AI labeling service is not configured')) {
-      return NextResponse.json({ error: error.message }, { status: 400 })
-    }
-
-    if (error?.message && error.message.includes('AI labeling API error')) {
-      // Best effort: update taxonomy status
-      const { key } = await params
-      const taxonomy = await prisma.taxonomy.findUnique({ where: { key }, select: { id: true } })
-      if (taxonomy) {
-        await prisma.taxonomy.update({
-          where: { id: taxonomy.id },
-          data: {
-            lastAISyncAt: new Date(),
-            lastAISyncStatus: 'failed',
-            lastAISyncError: error.message
-          }
-        })
-      }
-    }
-
     return NextResponse.json({ error: error?.message || 'Failed to sync taxonomy' }, { status: 500 })
   }
 }

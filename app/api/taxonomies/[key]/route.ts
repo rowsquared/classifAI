@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { parse } from 'csv-parse/sync'
 import { UNKNOWN_NODE_CODE } from '@/lib/constants'
-import { callAILabelingEndpoint, ensureAIConfig } from '@/lib/ai-labeling'
+import { startAIJob, monitorAIJob } from '@/lib/ai-labeling'
 
 export async function PUT(
   req: NextRequest,
@@ -217,22 +217,13 @@ export async function DELETE(
   try {
     const { key } = await params
 
-    // Check if taxonomy exists
     const existingTaxonomy = await prisma.taxonomy.findUnique({
       where: { key },
-      include: {
-        _count: {
-          select: { 
-            nodes: true,
-            annotations: true
-          }
-        }
-      },
       select: {
         id: true,
         key: true,
         _count: {
-          select: { 
+          select: {
             nodes: true,
             annotations: true
           }
@@ -254,23 +245,42 @@ export async function DELETE(
     })
 
     try {
-      ensureAIConfig()
-      await callAILabelingEndpoint('/taxonomies', {
+      const jobId = await startAIJob('/taxonomies', {
         action: 'delete',
         taxonomy: {
           key: deletedTaxonomy.key
         }
       })
+
       await prisma.taxonomy.update({
         where: { id: deletedTaxonomy.id },
         data: {
+          lastAISyncJobId: jobId,
           lastAISyncAt: new Date(),
-          lastAISyncStatus: 'deleted',
+          lastAISyncStatus: 'deleting',
           lastAISyncError: null
         }
       })
+
+      monitorAIJob(jobId, `/taxonomies/${jobId}/status`, async (result) => {
+        const data = result.success
+          ? {
+              lastAISyncStatus: 'deleted',
+              lastAISyncAt: new Date(),
+              lastAISyncError: null
+            }
+          : {
+              lastAISyncStatus: 'delete_failed',
+              lastAISyncAt: new Date(),
+              lastAISyncError: result.error || result.data?.error || 'Failed to delete taxonomy in AI service'
+            }
+        await prisma.taxonomy.update({
+          where: { id: deletedTaxonomy.id },
+          data
+        })
+      })
     } catch (syncError) {
-      console.error('Failed to notify AI service about taxonomy deletion:', syncError)
+      console.error('Failed to start AI taxonomy delete job:', syncError)
       await prisma.taxonomy.update({
         where: { id: deletedTaxonomy.id },
         data: {
