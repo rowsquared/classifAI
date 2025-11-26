@@ -166,11 +166,11 @@ async function processSingleJob(jobId: string) {
         const fields = buildFieldMap(sentence)
         if (Object.keys(fields).length === 0) return null
         return {
-          sentenceId: id,
+          sentence_id: id,
           fields
         }
       })
-      .filter(Boolean) as Array<{ sentenceId: string; fields: Record<string, string> }>
+      .filter(Boolean) as Array<{ sentence_id: string; fields: Record<string, string> }>
 
     if (payloadSentences.length === 0) {
       processed += batchIds.length
@@ -196,17 +196,19 @@ async function processSingleJob(jobId: string) {
       }
       const response = (result.data?.result || result.data) as {
         suggestions?: Array<{
-          sentenceId: string
+          sentenceId?: string
+          sentence_id?: string
           annotations: Array<{ level: number; nodeCode: string | number; confidence?: number }>
         }>
-        errors?: Array<{ sentenceId?: string; error?: string }>
+        errors?: Array<{ sentenceId?: string; sentence_id?: string; error?: string }>
       }
 
       const suggestionMap = new Map<string, { annotations: Array<{ level: number; nodeCode: string; confidence: number }> }>()
       for (const suggestion of response.suggestions || []) {
-        if (!suggestion?.sentenceId || !Array.isArray(suggestion.annotations)) continue
+        const sentenceId = suggestion.sentenceId || suggestion.sentence_id
+        if (!sentenceId || !Array.isArray(suggestion.annotations)) continue
         suggestionMap.set(
-          suggestion.sentenceId,
+          sentenceId,
           {
             annotations: (suggestion.annotations || []).map(a => ({
               level: a.level,
@@ -242,7 +244,7 @@ async function processSingleJob(jobId: string) {
 
       const errorIds = new Set(
         (response.errors || [])
-          .map(e => e.sentenceId)
+          .map(e => e.sentenceId || e.sentence_id)
           .filter((id): id is string => Boolean(id))
       )
 

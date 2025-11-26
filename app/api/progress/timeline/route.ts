@@ -85,8 +85,6 @@ export async function GET(req: NextRequest) {
     }
 
     // Get all sentences in the date range using Prisma
-    console.log('Timeline query - start:', start, 'end:', end, 'role:', user?.role)
-    
     const sentences = await prisma.sentence.findMany({
       where: {
         lastEditedAt: {
@@ -108,8 +106,6 @@ export async function GET(req: NextRequest) {
         flagged: true
       }
     })
-
-    console.log('Found sentences:', sentences.length)
 
     // Generate all dates in the period (to fill gaps)
     const allDates: string[] = []

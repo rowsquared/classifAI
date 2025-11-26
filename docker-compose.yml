@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hitlann-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hitlann}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hitlann_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hitlann}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hitlann}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hitlann-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hitlann}:${POSTGRES_PASSWORD:-hitlann_password}@postgres:5432/${POSTGRES_DB:-hitlann}?schema=public
+
+      # NextAuth
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+
+      # Default Admin User
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-admin@example.com}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-ChangeMe123!}
+      DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME:-Admin User}
+
+      # AI Labeling (Optional)
+      AI_LABELING_API_URL: ${AI_LABELING_API_URL}
+      AI_LABELING_API_KEY: ${AI_LABELING_API_KEY}
+      AI_LABELING_BATCH_SIZE: ${AI_LABELING_BATCH_SIZE:-100}
+      AI_LEARNING_BATCH_SIZE: ${AI_LEARNING_BATCH_SIZE:-100}
+      AI_LEARNING_MIN_NEW_ANNOTATIONS: ${AI_LEARNING_MIN_NEW_ANNOTATIONS:-500}
+      AI_JOB_POLL_INTERVAL_MS: ${AI_JOB_POLL_INTERVAL_MS:-5000}
+      AI_JOB_POLL_TIMEOUT_MS: ${AI_JOB_POLL_TIMEOUT_MS:-600000}
+    ports:
+      - "3000:3000"
+    command: sh -c "npx prisma migrate deploy && node server.js"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:

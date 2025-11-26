@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
-
+import { auth } from '@/lib/auth'
 const annotationSchema = z.object({
   annotations: z.array(z.object({
     level: z.number(),
@@ -21,7 +20,18 @@ export async function POST(
 ) {
   try {
     const { sentenceId } = await params
+
+    if (req.headers.get('x-warmup') === '1') {
+      return NextResponse.json({ ok: true, warmup: true })
+    }
+
     const body = await req.json()
+    const session = await auth()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const userId = session.user.id
+
     const {
       annotations: rawAnnotations,
       status,
@@ -48,9 +58,6 @@ export async function POST(
       }
     }
 
-    // Get default user for comments
-    const defaultUser = await prisma.user.findFirst()
-
     // Get active taxonomies before transaction (needed for completion check)
     const activeTaxonomies = await prisma.taxonomy.findMany({
       where: { isActive: true },
@@ -76,7 +83,7 @@ export async function POST(
         const startTime = labelingStartedAt ? new Date(labelingStartedAt) : null
         
         for (const annotation of annotations) {
-          // Now we store '-99' for unknown (not -1)
+          // Unknown codes are now level-specific (-9, -99, ...)
           await tx.sentenceAnnotation.create({
             data: {
               sentenceId: sentenceId,
@@ -84,19 +91,20 @@ export async function POST(
               level: annotation.level,
               nodeCode: annotation.nodeCode, // '-99' for unknown
               source: 'user',
-              labelingStartedAt: startTime
+              labelingStartedAt: startTime,
+              createdById: userId
             }
           })
         }
       }
 
       // Add comment if provided
-      if (comment && comment.trim() && defaultUser) {
+      if (comment && comment.trim()) {
         await tx.comment.create({
           data: {
             body: comment.trim(),
             sentenceId: sentenceId,
-            authorId: defaultUser.id
+            authorId: userId
           }
         })
       }
@@ -145,8 +153,9 @@ export async function POST(
       const statusChanged = currentSentence?.status !== finalStatus
       const hasAnnotations = annotations.length > 0
       
-      if (statusChanged || hasAnnotations) {
+      if (statusChanged || hasAnnotations || flagged !== undefined || comment) {
         updateData.lastEditedAt = new Date()
+        updateData.lastEditorId = userId
       }
       
       await tx.sentence.update({

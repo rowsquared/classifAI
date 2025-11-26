@@ -120,6 +120,13 @@ export async function GET(req: NextRequest) {
     const level = searchParams.get('level')
     const code = searchParams.get('code')
     const source = searchParams.get('source')
+    const aiTaxonomyKey = searchParams.get('aiTaxonomyKey')
+    const aiLevel = searchParams.get('aiLevel')
+    const aiCode = searchParams.get('aiCode')
+    const aiConfidenceMin = searchParams.get('aiConfidenceMin')
+    const aiConfidenceMax = searchParams.get('aiConfidenceMax')
+    const hasSubmittedLabels = searchParams.get('hasSubmittedLabels')
+    const hasAISuggestions = searchParams.get('hasAISuggestions')
 
     if (taxonomyKey || level || code || source) {
       const annotationFilter: any = {
@@ -141,6 +148,68 @@ export async function GET(req: NextRequest) {
       if (source) annotationFilter.annotations.some.source = source
 
       AND.push(annotationFilter)
+    }
+    
+    if (aiTaxonomyKey || aiLevel || aiCode || aiConfidenceMin || aiConfidenceMax) {
+      const aiFilter: Prisma.SentenceAISuggestionWhereInput = {}
+      if (aiTaxonomyKey) {
+        aiFilter.taxonomy = { key: aiTaxonomyKey }
+      }
+      if (aiLevel) {
+        aiFilter.level = parseInt(aiLevel)
+      }
+      if (aiCode) {
+        aiFilter.nodeCode = aiCode
+      }
+      const confidenceFilter: Prisma.FloatFilter = {}
+      if (aiConfidenceMin) {
+        const minVal = parseFloat(aiConfidenceMin)
+        if (!Number.isNaN(minVal)) {
+          confidenceFilter.gte = minVal
+        }
+      }
+      if (aiConfidenceMax) {
+        const maxVal = parseFloat(aiConfidenceMax)
+        if (!Number.isNaN(maxVal)) {
+          confidenceFilter.lte = maxVal
+        }
+      }
+      if (Object.keys(confidenceFilter).length > 0) {
+        aiFilter.confidenceScore = confidenceFilter
+      }
+      AND.push({
+        aiSuggestions: {
+          some: aiFilter
+        }
+      })
+    }
+
+    if (hasSubmittedLabels === 'true') {
+      AND.push({
+        annotations: {
+          some: {}
+        }
+      })
+    } else if (hasSubmittedLabels === 'false') {
+      AND.push({
+        annotations: {
+          none: {}
+        }
+      })
+    }
+
+    if (hasAISuggestions === 'true') {
+      AND.push({
+        aiSuggestions: {
+          some: {}
+        }
+      })
+    } else if (hasAISuggestions === 'false') {
+      AND.push({
+        aiSuggestions: {
+          none: {}
+        }
+      })
     }
 
     // Flagged filter

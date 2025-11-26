@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import PageHeader from '@/components/PageHeader'
+import { formatDateTime } from '@/lib/utils'
 
 export type SentenceImport = {
   id: string
@@ -232,7 +233,7 @@ export default function SentenceAdminClient({ initialImports }: Props) {
                   <div>
                     <h3 className="font-medium text-gray-900">{importRecord.fileName}</h3>
                     <p className="text-sm text-gray-500">
-                      Uploaded on {new Date(importRecord.uploadedAt).toLocaleString()}
+                      Uploaded on {formatDateTime(importRecord.uploadedAt)}
                     </p>
                     <p className="text-sm text-gray-600 mt-1">
                       {importRecord.sentenceCount.toLocaleString()} sentences

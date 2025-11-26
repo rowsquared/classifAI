@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { auth } from '@/lib/auth'
 import { z } from 'zod'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { isUnknownNodeCode } from '@/lib/constants'
 
 const bulkLabelSchema = z.object({
   sentenceIds: z.array(z.string()).min(1),
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     // Verify all node codes exist (if annotations provided)
     // Note: -99 is the special code for "unknown" and won't exist in taxonomyNode
     if (normalizedAnnotations && normalizedAnnotations.length > 0) {
-      const nodeCodes = normalizedAnnotations.map(a => a.nodeCode).filter(c => c !== UNKNOWN_NODE_CODE)
+      const nodeCodes = normalizedAnnotations.map(a => a.nodeCode).filter(c => !isUnknownNodeCode(c))
       
       if (nodeCodes.length > 0) {
         const nodes = await prisma.taxonomyNode.findMany({

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { parse } from 'csv-parse/sync'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { Prisma } from '@prisma/client'
+import { isUnknownNodeCode } from '@/lib/constants'
 import { startAIJob, monitorAIJob } from '@/lib/ai-labeling'
 
 export async function PUT(
@@ -12,7 +13,6 @@ export async function PUT(
     const { key } = await params
     const formData = await req.formData()
     
-    const displayName = formData.get('displayName') as string | null
     const description = formData.get('description') as string | null
     const levelNamesStr = formData.get('levelNames') as string | null
     const file = formData.get('file') as File | null
@@ -44,7 +44,6 @@ export async function PUT(
 
     // Prepare update data
     const updateData: any = {}
-    if (displayName) updateData.displayName = displayName
     if (description !== null) updateData.description = description || null
     if (levelNames !== undefined) updateData.levelNames = levelNames
 
@@ -87,6 +86,15 @@ export async function PUT(
         const rowId = String(record.id).trim()
         const level = parseInt(String(record.level).trim())
         const label = String(record.label || '').trim()
+
+        if (isUnknownNodeCode(rowId)) {
+          throw new Error('CSV contains IDs that are reserved for unknown labels (-9, -99, ...). Please rename those rows.')
+        }
+
+        const parentRaw = record.parent_id && String(record.parent_id).trim()
+        if (parentRaw && isUnknownNodeCode(parentRaw)) {
+          throw new Error('CSV contains parent IDs that are reserved for unknown labels (-9, -99, ...). Please adjust the hierarchy.')
+        }
 
         // Drop duplicate IDs (keep first occurrence)
         if (seenIds.has(rowId)) {
@@ -143,27 +151,52 @@ export async function PUT(
         })
 
         // Create new nodes
-        const nodes = finalRecords.map((record) => {
+        const parentLookup = new Map<string, string | null>()
+        finalRecords.forEach((record) => {
           const code = String(record.id).trim()
           const parentCode = record.parent_id && String(record.parent_id).trim()
             ? String(record.parent_id).trim()
             : null
+          parentLookup.set(code, parentCode)
+        })
 
-          if (code === UNKNOWN_NODE_CODE || parentCode === UNKNOWN_NODE_CODE) {
-            throw new Error('Code -99 is reserved for UNKNOWN labels')
+        const nodes = finalRecords.map((record) => {
+          const code = String(record.id).trim()
+          const parentCode = parentLookup.get(code) ?? null
+
+          if (isUnknownNodeCode(code) || isUnknownNodeCode(parentCode)) {
+            throw new Error('CSV contains IDs that are reserved for unknown labels (-9, -99, ...). Please rename those rows.')
           }
+
+          const level = parseInt(String(record.level).trim())
+          const definition = String(record.definition || '').trim()
+          const pathParts: string[] = []
+          let currentCode: string | null = code
+          const guard = new Set<string>()
+          while (currentCode) {
+            if (guard.has(currentCode)) break
+            guard.add(currentCode)
+            pathParts.unshift(currentCode)
+            currentCode = parentLookup.get(currentCode) ?? null
+          }
+          const path = pathParts.join('.')
+          const hasChildren = finalRecords.some(
+            (r) => String(r.parent_id || '').trim() === code
+          )
 
           return {
             taxonomyId: existingTaxonomy.id,
             code,
-            level: parseInt(String(record.level).trim()),
+            level,
             label: String(record.label || '').trim(),
-            definition: String(record.definition || '').trim(),
-            parentCode
+            definition: definition || null,
+            parentCode,
+            path: path || null,
+            isLeaf: hasChildren ? false : true
           }
         })
 
-        await tx.taxonomyNode.createMany({ data: nodes })
+        await tx.taxonomyNode.createMany({ data: nodes as unknown as Prisma.TaxonomyNodeCreateManyInput[] })
 
         // Create synonyms
         const synonymsToCreate: any[] = []
@@ -241,7 +274,7 @@ export async function DELETE(
     // Soft delete
     const deletedTaxonomy = await prisma.taxonomy.update({
       where: { key },
-      data: { isActive: false }
+      data: { isActive: false } as Prisma.TaxonomyUpdateInput
     })
 
     try {
@@ -259,11 +292,11 @@ export async function DELETE(
           lastAISyncAt: new Date(),
           lastAISyncStatus: 'deleting',
           lastAISyncError: null
-        }
+        } as Prisma.TaxonomyUpdateInput
       })
 
       monitorAIJob(jobId, `/taxonomies/${jobId}/status`, async (result) => {
-        const data = result.success
+        const data = (result.success
           ? {
               lastAISyncStatus: 'deleted',
               lastAISyncAt: new Date(),
@@ -273,7 +306,7 @@ export async function DELETE(
               lastAISyncStatus: 'delete_failed',
               lastAISyncAt: new Date(),
               lastAISyncError: result.error || result.data?.error || 'Failed to delete taxonomy in AI service'
-            }
+            }) as unknown as Prisma.TaxonomyUpdateInput
         await prisma.taxonomy.update({
           where: { id: deletedTaxonomy.id },
           data
@@ -287,7 +320,7 @@ export async function DELETE(
           lastAISyncAt: new Date(),
           lastAISyncStatus: 'delete_failed',
           lastAISyncError: syncError instanceof Error ? syncError.message : String(syncError)
-        }
+        } as Prisma.TaxonomyUpdateInput
       })
     }
 

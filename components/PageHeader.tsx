@@ -1,5 +1,6 @@
 import { ReactNode } from 'react'
 import { HEADER_HEIGHT } from './Sidebar'
+import AIJobStatusBadge from './AIJobStatusBadge'
 
 interface PageHeaderProps {
   title: string
@@ -13,7 +14,10 @@ export default function PageHeader({ title, actions }: PageHeaderProps) {
       style={{ height: `${HEADER_HEIGHT}px` }}
     >
       <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
-      {actions && <div className="flex items-center gap-3">{actions}</div>}
+      <div className="flex items-center gap-3">
+        <AIJobStatusBadge />
+        {actions && <div className="flex items-center gap-3">{actions}</div>}
+      </div>
     </div>
   )
 }

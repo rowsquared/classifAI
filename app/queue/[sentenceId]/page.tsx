@@ -1,12 +1,11 @@
 "use client"
 import { useEffect, useState, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
 import PageHeader from '@/components/PageHeader'
 import TaxonomyBrowser, { type Taxonomy, type SelectedLabel } from '@/components/TaxonomyBrowser'
 import ResizablePanel from '@/components/ResizablePanel'
 import { formatFieldName } from '@/lib/utils'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { getUnknownCodeForLevel, isUnknownNodeCode } from '@/lib/constants'
 
 type Sentence = {
   id: string
@@ -32,6 +31,8 @@ type Sentence = {
     nodeDefinition?: string | null
     isLeaf?: boolean
     taxonomy: { key: string }
+    source?: 'user' | 'ai'
+    confidenceScore?: number
   }>
   _count?: { comments: number }
 }
@@ -84,6 +85,10 @@ export default function LabelingPage() {
   const [completedTaxonomies, setCompletedTaxonomies] = useState<Set<string>>(new Set())
   const [labelingStartedAt] = useState<Date>(new Date()) // Record when user opened this sentence
   const [currentTaxonomyLevel, setCurrentTaxonomyLevel] = useState(1) // Current level being viewed in TaxonomyBrowser
+  const [isNavigatingBack, setIsNavigatingBack] = useState(false)
+  useEffect(() => {
+    router.prefetch?.('/queue')
+  }, [router])
 
   // Get active taxonomy
   const activeTaxonomy = taxonomies[activeTaxonomyIndex] || null
@@ -114,7 +119,6 @@ export default function LabelingPage() {
         if (data.ok && data.taxonomies.length > 0) {
           const loadedTaxonomies = data.taxonomies.map((t: any) => ({
             key: t.key,
-            displayName: t.displayName,
             maxDepth: t.maxDepth || 5,
             levelNames: t.levelNames
           }))
@@ -127,6 +131,24 @@ export default function LabelingPage() {
     }
     loadTaxonomies()
   }, [])
+
+  // Warm the annotations API route so the first flag/submit isn't delayed by compilation
+  useEffect(() => {
+    if (!sentenceId) return
+    const controller = new AbortController()
+    fetch(`/api/sentences/${sentenceId}/annotations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-warmup': '1'
+      },
+      body: '{}',
+      signal: controller.signal
+    }).catch(() => {
+      // Ignore warmup errors - real requests will still work
+    })
+    return () => controller.abort()
+  }, [sentenceId])
 
   // Load sentence data (can load in parallel with taxonomies)
   useEffect(() => {
@@ -165,9 +187,23 @@ export default function LabelingPage() {
           taxonomyKey: ann.taxonomy.key,
           label: ann.nodeLabel || '',
           definition: ann.nodeDefinition || undefined,
-          isLeaf: ann.isLeaf || false
+          isLeaf: ann.isLeaf || false,
+          source: ann.source || 'user',
+          confidenceScore: ann.confidenceScore
         }))
       setSelectedLabels(labels)
+      
+      // If there are AI suggestions, navigate to the lowest level to show it
+      const aiLabels = labels.filter(l => l.source === 'ai')
+      if (aiLabels.length > 0) {
+        // Find the lowest level AI suggestion
+        const lowestLevel = Math.max(...aiLabels.map(l => l.level))
+        // Set the current level to show the lowest level (TaxonomyBrowser will navigate)
+        setCurrentTaxonomyLevel(lowestLevel)
+      } else {
+        // No AI suggestions, start at level 1
+        setCurrentTaxonomyLevel(1)
+      }
     }
   }, [sentence, activeTaxonomy?.key])
 
@@ -240,7 +276,23 @@ export default function LabelingPage() {
   }
 
   // Check if we have a leaf or unknown selected
-  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || l.nodeCode === UNKNOWN_NODE_CODE)
+  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf === true || isUnknownNodeCode(l.nodeCode))
+  
+  // Also check if we have AI suggestions with a complete path (all levels from 1 to lowest level)
+  const aiLabels = selectedLabels.filter(l => l.source === 'ai' && l.taxonomyKey === activeTaxonomy?.key)
+  const hasCompleteAIPath = aiLabels.length > 0 && activeTaxonomy && (() => {
+    const maxLevel = Math.max(...aiLabels.map(l => l.level))
+    const allLevels = aiLabels.map(l => l.level)
+    // Check if we have a complete path (levels 1, 2, 3, ... up to maxLevel)
+    const expectedLevels = Array.from({ length: maxLevel }, (_, i) => i + 1)
+    const hasCompletePath = expectedLevels.every(level => allLevels.includes(level))
+    // Get the lowest level label
+    const lowestLabel = aiLabels.find(l => l.level === maxLevel)
+    // Enable submit if we have a complete path - having all levels means it's a valid classification
+    return hasCompletePath && lowestLabel !== undefined
+  })()
+  
+  const canSubmit = hasLeafOrUnknown || hasCompleteAIPath
 
   // Handle Unknown
   const handleUnknown = () => {
@@ -255,7 +307,7 @@ export default function LabelingPage() {
     // Add unknown at the current level
     const unknownLabel: SelectedLabel = {
       level: currentTaxonomyLevel,
-      nodeCode: UNKNOWN_NODE_CODE,
+      nodeCode: getUnknownCodeForLevel(currentTaxonomyLevel),
       taxonomyKey: activeTaxonomy.key,
       label: 'Unknown',
       isLeaf: true
@@ -383,7 +435,7 @@ export default function LabelingPage() {
 
   // Handle Submit
   const handleSubmit = async () => {
-    if (!hasLeafOrUnknown || !activeTaxonomy) {
+    if (!canSubmit || !activeTaxonomy) {
       alert('Please select a complete path or mark as unknown')
       return
     }
@@ -477,7 +529,7 @@ export default function LabelingPage() {
           handleSkip()
           break
         case 'enter':
-          if (hasLeafOrUnknown) {
+          if (canSubmit) {
             handleSubmit()
           }
           break
@@ -526,25 +578,47 @@ export default function LabelingPage() {
   const totalCount = taxonomies.length
   const progressText = `${completedCount}/${totalCount} taxonomies completed`
 
+  const actionButtonBaseClass = 'flex items-center gap-2 px-3 py-2 rounded-lg transition-colors'
+  const primaryActionClasses = 'bg-teal-600 text-white hover:bg-teal-700'
+  const commentActiveClasses = 'bg-[#A7ACD9] text-[#1f2238] hover:bg-[#9ea3cf]'
+  const flagActiveClasses = 'bg-[#F56476] text-white hover:bg-[#e8576a]'
+  const skipActiveClasses = 'bg-[#E8E24A] text-[#4a4510] hover:bg-[#d8d145]'
+  const disabledSubmitClasses = 'bg-teal-600/40 text-white/85 cursor-not-allowed'
+  const submittedSubmitClasses = 'bg-[#3A67BB] text-white hover:bg-[#335aa8]'
+  const shortcutClasses = {
+    dark: 'text-xs px-1.5 py-0.5 rounded border border-white/15 bg-white/20 text-white',
+    light: 'text-xs px-1.5 py-0.5 rounded border border-black/5 bg-white/50 text-current'
+  }
+
+  const isSentenceSubmitted = sentence.status === 'submitted'
+  const isActiveTaxonomyCompleted = activeTaxonomy ? completedTaxonomies.has(activeTaxonomy.key) : false
+
   // Get tab colors based on taxonomy index (matches TaxonomyBrowser)
   const getTabColors = (index: number) => {
     const colors = [
-      { active: 'text-indigo-600', checkmark: 'text-indigo-600' },  // Index 0: Primary/Teal
-      { active: 'text-purple-600', checkmark: 'text-purple-600' },  // Index 1: Purple
-      { active: 'text-pink-600', checkmark: 'text-pink-600' },      // Index 2: Pink
-      { active: 'text-rose-600', checkmark: 'text-rose-600' },      // Index 3: Rose
+      { active: 'text-teal-600', checkmark: 'text-teal-600' },       // Index 0: Primary/Teal
+      { active: 'text-[#3A67BB]', checkmark: 'text-[#3A67BB]' },     // Index 1: Submitted blue
+      { active: 'text-[#A14A76]', checkmark: 'text-[#A14A76]' },     // Index 2: Rose purple
+      { active: 'text-rose-600', checkmark: 'text-rose-600' },       // Index 3: Rose
       { active: 'text-orange-600', checkmark: 'text-orange-600' },   // Index 4: Orange
     ]
     return colors[index % colors.length] || colors[0]
   }
 
+  const handleBackToQueue = () => {
+    if (isNavigatingBack) return
+    setIsNavigatingBack(true)
+    router.push('/queue')
+  }
+
   const backButton = (
-    <Link
-      href="/queue"
-      className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+    <button
+      onClick={handleBackToQueue}
+      disabled={isNavigatingBack}
+      className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed"
     >
-      ← Back to Queue
-    </Link>
+      ← {isNavigatingBack ? 'Loading Queue…' : 'Back to Queue'}
+    </button>
   )
 
   return (
@@ -569,14 +643,12 @@ export default function LabelingPage() {
                 
                 return (
                   <div key={num}>
-                    <h2 className="text-sm font-semibold text-indigo-700 mb-3">
+                    <h2 className="text-sm font-semibold text-indigo-700 mb-2">
                       {formatFieldName(name)}
                     </h2>
-                    <div className="p-5 bg-indigo-50/30 border border-indigo-100 rounded-lg">
-                      <p className="text-gray-900 whitespace-pre-wrap leading-relaxed text-[15px]">
-                        {value}
-                      </p>
-                    </div>
+                    <p className="text-gray-900 whitespace-pre-wrap leading-relaxed text-lg">
+                      {value}
+                    </p>
                   </div>
                 )
               })}
@@ -594,10 +666,10 @@ export default function LabelingPage() {
                       
                       return (
                         <div key={num}>
-                          <h3 className="text-xs font-semibold text-indigo-600 mb-2">
+                          <h3 className="text-sm font-semibold text-indigo-700 mb-2">
                             {formatFieldName(name)}
                           </h3>
-                          <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                          <p className="text-base text-gray-900 whitespace-pre-wrap leading-relaxed">
                             {value}
                           </p>
                         </div>
@@ -610,25 +682,42 @@ export default function LabelingPage() {
           </div>
 
           {/* Navigation Buttons - Bottom Right */}
-          <div className="p-4 flex justify-end gap-2 bg-white">
-            <button
-              onClick={handlePrevious}
-              className="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-              title="Previous sentence"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <button
-              onClick={handleNext}
-              className="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-              title="Next sentence"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
+          <div className="p-4 flex items-center justify-between gap-2 bg-white">
+            <div className="flex items-center gap-3 text-xs font-medium text-gray-500">
+              {sentenceIds.length > 0 && currentIndex >= 0 ? (
+                <>
+                  <span>Sentence {currentIndex + 1} of {sentenceIds.length}</span>
+                  <div className="w-32 h-1.5 rounded-full bg-gray-200">
+                    <div
+                      className="h-full rounded-full bg-teal-500 transition-all"
+                      style={{ width: `${((currentIndex + 1) / sentenceIds.length) * 100}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <span>Sentence navigation unavailable</span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handlePrevious}
+                className="p-2 text-gray-600 hover:text-[#008080] hover:bg-[#e6fbf8] rounded-lg transition-colors"
+                title="Previous sentence"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <button
+                onClick={handleNext}
+                className="p-2 text-gray-600 hover:text-[#008080] hover:bg-[#e6fbf8] rounded-lg transition-colors"
+                title="Next sentence"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
           </div>
         </ResizablePanel>
 
@@ -636,8 +725,8 @@ export default function LabelingPage() {
         <div className="flex-1 bg-white relative flex flex-col overflow-hidden">
           {/* Taxonomy Tabs */}
           {taxonomies.length > 1 && (
-            <div className="border-b border-gray-200 bg-gray-50">
-              <div className="flex items-center justify-between px-4 py-2">
+            <div className="bg-white">
+              <div className="flex items-center justify-between px-4 pt-3">
                 <div className="flex gap-1">
                   {taxonomies.map((tax, index) => {
                     const tabColors = getTabColors(index)
@@ -647,7 +736,7 @@ export default function LabelingPage() {
                         onClick={() => handleTaxonomyTabChange(index)}
                         className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative ${
                           activeTaxonomyIndex === index
-                            ? `bg-white ${tabColors.active} border-t border-l border-r border-gray-200`
+                            ? `bg-white ${tabColors.active} border border-gray-200 border-b-0 -mb-px`
                             : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                         }`}
                       >
@@ -668,95 +757,121 @@ export default function LabelingPage() {
           
           {/* Taxonomy Browser */}
           {activeTaxonomy && (
-            <TaxonomyBrowser
-              key={activeTaxonomy.key} // Force remount when taxonomy changes to reset navigation state
-              taxonomy={activeTaxonomy}
-              selectedLabels={selectedLabels}
-              onLabelsChange={setSelectedLabels}
-              taxonomyIndex={activeTaxonomyIndex}
-              onCurrentLevelChange={setCurrentTaxonomyLevel}
-            />
+            <div
+              className={`${
+                taxonomies.length > 1 ? 'border-t border-gray-200 bg-white -mt-px' : ''
+              } flex-1 overflow-y-auto`}
+            >
+              <TaxonomyBrowser
+                key={`${sentenceId}-${activeTaxonomy.key}`}
+                taxonomy={activeTaxonomy}
+                selectedLabels={selectedLabels}
+                onLabelsChange={setSelectedLabels}
+                taxonomyIndex={activeTaxonomyIndex}
+                onCurrentLevelChange={setCurrentTaxonomyLevel}
+                showTabs={taxonomies.length > 1}
+              />
+            </div>
           )}
 
           {/* Sticky Action Buttons */}
-          <div className="p-4 bg-white">
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                onClick={() => {
-                  loadComments(showResolvedComments)
-                  setShowCommentDialog(true)
-                }}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                  hasComment 
-                    ? 'bg-green-200 text-green-800 hover:bg-green-300' 
-                    : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
-                }`}
-                title="Add Comment (C)"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-                <span className="text-sm font-medium">Comment</span>
-                <span className="text-xs bg-white px-1 rounded">C</span>
-              </button>
-              <button
-                onClick={handleFlag}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                  sentence.flagged 
-                    ? 'bg-red-200 text-red-800 hover:bg-red-300' 
-                    : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
-                }`}
-                title="Flag/Unflag (F)"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9" />
-                </svg>
-                <span className="text-sm font-medium">Flag</span>
-                <span className="text-xs bg-white px-1 rounded">F</span>
-              </button>
-              <button
-                onClick={handleUnknown}
-                className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-800 hover:bg-indigo-200 rounded-lg transition-colors"
-                title="Unknown (U)"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="text-sm font-medium">Unknown</span>
-                <span className="text-xs bg-white px-1 rounded">U</span>
-              </button>
-              <button
-                onClick={handleSkip}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                  sentence?.status === 'skipped'
-                    ? 'bg-yellow-200 text-yellow-800 hover:bg-yellow-300'
-                    : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
-                }`}
-                title="Skip (S)"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                </svg>
-                <span className="text-sm font-medium">Skip</span>
-                <span className="text-xs bg-white px-1 rounded">S</span>
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={!hasLeafOrUnknown}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ml-auto ${
-                  hasLeafOrUnknown 
-                    ? 'bg-indigo-500 text-white hover:bg-indigo-600' 
-                    : 'bg-indigo-100 text-indigo-400 cursor-not-allowed'
-                }`}
-                title="Submit (Enter)"
-              >
-                <span className="text-sm font-medium">Submit</span>
-                <div className={`flex items-center justify-center w-5 h-5 rounded text-xs ${
-                  hasLeafOrUnknown ? 'bg-indigo-400' : 'bg-white'
-                }`}>
-                  ↵
-                </div>
-              </button>
+          <div className="mt-auto">
+            <div className="sticky bottom-0 border-t border-gray-200 bg-white p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => {
+                    loadComments(showResolvedComments)
+                    setShowCommentDialog(true)
+                  }}
+                  className={`${actionButtonBaseClass} ${
+                    hasComment ? commentActiveClasses : primaryActionClasses
+                  }`}
+                  title="Add Comment (C)"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                    />
+                  </svg>
+                  <span className="text-sm font-medium">Comment</span>
+                  <span className={`${hasComment ? shortcutClasses.light : shortcutClasses.dark}`}>C</span>
+                </button>
+                <button
+                  onClick={handleFlag}
+                  className={`${actionButtonBaseClass} ${
+                    sentence.flagged ? flagActiveClasses : primaryActionClasses
+                  }`}
+                  title="Flag/Unflag (F)"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"
+                    />
+                  </svg>
+                  <span className="text-sm font-medium">Flag</span>
+                  <span className={`${sentence.flagged ? shortcutClasses.light : shortcutClasses.dark}`}>F</span>
+                </button>
+                <button
+                  onClick={handleUnknown}
+                  className={`${actionButtonBaseClass} ${primaryActionClasses}`}
+                  title="Unknown (U)"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span className="text-sm font-medium">Unknown</span>
+                  <span className={shortcutClasses.dark}>U</span>
+                </button>
+                <button
+                  onClick={handleSkip}
+                  className={`${actionButtonBaseClass} ${
+                    sentence?.status === 'skipped' ? skipActiveClasses : primaryActionClasses
+                  }`}
+                  title="Skip (S)"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                  </svg>
+                  <span className="text-sm font-medium">Skip</span>
+                  <span className={`${sentence?.status === 'skipped' ? shortcutClasses.light : shortcutClasses.dark}`}>S</span>
+                </button>
+                <button
+                  onClick={handleSubmit}
+                  disabled={!canSubmit}
+                  className={`ml-auto flex items-center gap-2 rounded-lg px-4 py-2 transition-colors ${
+                    isActiveTaxonomyCompleted || isSentenceSubmitted
+                      ? submittedSubmitClasses
+                      : canSubmit
+                        ? primaryActionClasses
+                        : disabledSubmitClasses
+                  }`}
+                  title="Submit (Enter)"
+                >
+                  <span className="text-sm font-medium">Submit</span>
+                  <div
+                    className={`flex h-5 w-5 items-center justify-center rounded ${
+                      isActiveTaxonomyCompleted || isSentenceSubmitted
+                        ? shortcutClasses.dark
+                        : canSubmit
+                          ? shortcutClasses.dark
+                          : `${shortcutClasses.dark} opacity-70 text-white/80`
+                    }`}
+                  >
+                    ↵
+                  </div>
+                </button>
+              </div>
             </div>
           </div>
         </div>

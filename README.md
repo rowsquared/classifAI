@@ -28,7 +28,7 @@ A modern, responsive web application for hierarchical data labeling with optiona
 ### Prerequisites
 
 - Node.js 18+ (using pnpm package manager)
-- PostgreSQL database
+- PostgreSQL 12+ database
 
 ### Installation
 
@@ -48,16 +48,26 @@ pnpm install
 cp .env.example .env
 ```
 
-Edit `.env` with your database credentials and secrets:
+Edit `.env` with your database credentials and secrets. See [ENV_SETUP.md](./ENV_SETUP.md) for detailed configuration.
+
+**Required variables:**
 ```env
 DATABASE_URL="postgresql://user:password@localhost:5432/hitlann"
-NEXTAUTH_SECRET="your-secret-here"
+NEXTAUTH_SECRET="your-secret-here"  # Generate with: openssl rand -base64 32
 NEXTAUTH_URL="http://localhost:3000"
+DEFAULT_ADMIN_EMAIL="admin@example.com"
+DEFAULT_ADMIN_PASSWORD="change-this-immediately"
 ```
 
 4. Set up the database:
 ```bash
+# Run migrations
 npx prisma migrate deploy
+
+# Generate Prisma client
+npx prisma generate
+
+# (Optional) Create initial admin user if not auto-created
 npx tsx scripts/init-admin.ts
 ```
 
@@ -70,11 +80,98 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Initial Login
 
-Default admin credentials:
-- Email: `admin@example.com`
-- Password: `admin123`
+The default admin user is created automatically on first run using the `DEFAULT_ADMIN_EMAIL` and `DEFAULT_ADMIN_PASSWORD` from your `.env` file.
 
 **Important:** Change the password immediately after first login!
+
+## Production Deployment
+
+### Build for Production
+
+```bash
+# Install dependencies
+pnpm install
+
+# Generate Prisma client
+npx prisma generate
+
+# Run database migrations
+npx prisma migrate deploy
+
+# Build the application
+pnpm build
+```
+
+### Environment Variables for Production
+
+Ensure all environment variables are set in your production environment:
+
+- **DATABASE_URL**: Production PostgreSQL connection string
+- **NEXTAUTH_URL**: Your production domain (e.g., `https://yourdomain.com`)
+- **NEXTAUTH_SECRET**: Strong random secret (generate with `openssl rand -base64 32`)
+- **DEFAULT_ADMIN_EMAIL**: Admin email (change password after first login)
+- **DEFAULT_ADMIN_PASSWORD**: Strong initial password
+- **AI_LABELING_API_URL**: (Optional) External AI service URL
+- **AI_LABELING_API_KEY**: (Optional) API key for AI service
+
+### Running in Production
+
+```bash
+pnpm start
+```
+
+### Deployment Platforms
+
+#### Vercel
+
+1. Connect your repository to Vercel
+2. Set environment variables in Vercel dashboard
+3. Configure build command: `pnpm build`
+4. Configure output directory: `.next`
+5. Add PostgreSQL database (Vercel Postgres or external)
+
+#### Docker
+
+Create a `Dockerfile`:
+
+```dockerfile
+FROM node:18-alpine AS base
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+FROM base AS deps
+WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN pnpm build
+
+FROM base AS runner
+WORKDIR /app
+ENV NODE_ENV production
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/prisma ./prisma
+RUN npx prisma generate
+EXPOSE 3000
+CMD ["pnpm", "start"]
+```
+
+### Security Checklist
+
+- [ ] Change `NEXTAUTH_SECRET` to a strong random value
+- [ ] Change `DEFAULT_ADMIN_PASSWORD` to a strong password
+- [ ] Use strong database credentials
+- [ ] Enable HTTPS in production
+- [ ] Set secure cookie settings (handled by NextAuth in production)
+- [ ] Review and restrict CORS if needed
+- [ ] Set up database backups
+- [ ] Configure rate limiting (consider adding middleware)
+- [ ] Review file upload limits for CSV imports
 
 ## Project Structure
 

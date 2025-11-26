@@ -1,17 +1,17 @@
 import { cookies, headers } from 'next/headers'
 
-function buildBaseUrl() {
+async function buildBaseUrl() {
   if (process.env.NEXT_PUBLIC_BASE_URL) {
     return process.env.NEXT_PUBLIC_BASE_URL
   }
-  const headerStore = headers()
+  const headerStore = await headers()
   const protocol = headerStore.get('x-forwarded-proto') ?? 'http'
   const host = headerStore.get('host') ?? 'localhost:3000'
   return `${protocol}://${host}`
 }
 
-function buildCookieHeader() {
-  const cookieStore = cookies()
+async function buildCookieHeader() {
+  const cookieStore = await cookies()
   const serialized = cookieStore.getAll().map(({ name, value }) => `${name}=${value}`).join('; ')
   return serialized || undefined
 }
@@ -21,8 +21,8 @@ export async function serverFetchJSON<T>(
   init: RequestInit = {},
   { silent } = { silent: false }
 ): Promise<T | null> {
-  const baseUrl = buildBaseUrl()
-  const cookieHeader = buildCookieHeader()
+  const baseUrl = await buildBaseUrl()
+  const cookieHeader = await buildCookieHeader()
   const headersInit: HeadersInit = {
     ...(init.headers || {}),
     ...(cookieHeader ? { Cookie: cookieHeader } : {})

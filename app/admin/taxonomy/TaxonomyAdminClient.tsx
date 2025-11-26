@@ -1,12 +1,11 @@
 "use client"
 import { useState } from 'react'
 import PageHeader from '@/components/PageHeader'
-import { formatRelativeTime } from '@/lib/utils'
+import { formatRelativeTime, formatDate } from '@/lib/utils'
 
 export type Taxonomy = {
   id: string
   key: string
-  displayName: string
   description: string | null
   levelNames: Record<string, string> | null
   maxDepth: number
@@ -55,7 +54,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
   // Form states
   const [formData, setFormData] = useState({
     key: '',
-    displayName: '',
     description: '',
     maxDepth: 5,
     levelNames: {} as Record<string, string>,
@@ -92,7 +90,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
   function openCreateModal() {
     setFormData({
       key: '',
-      displayName: '',
       description: '',
       maxDepth: 5,
       levelNames: {},
@@ -106,7 +103,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     setSelectedTaxonomy(taxonomy)
     setFormData({
       key: taxonomy.key,
-      displayName: taxonomy.displayName,
       description: taxonomy.description || '',
       maxDepth: taxonomy.maxDepth,
       levelNames: taxonomy.levelNames || {},
@@ -122,7 +118,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
   }
 
   async function handleCreate() {
-    if (!formData.key || !formData.displayName || !formData.file) {
+    if (!formData.key || !formData.file) {
       setModalMessage({ type: 'error', text: 'Please fill all required fields and upload a file' })
       return
     }
@@ -133,7 +129,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     try {
       const formDataToSend = new FormData()
       formDataToSend.append('key', formData.key)
-      formDataToSend.append('displayName', formData.displayName)
       if (formData.description) formDataToSend.append('description', formData.description)
       formDataToSend.append('maxDepth', formData.maxDepth.toString())
       if (Object.keys(formData.levelNames).length > 0) {
@@ -172,7 +167,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
 
     try {
       const formDataToSend = new FormData()
-      formDataToSend.append('displayName', formData.displayName)
       formDataToSend.append('description', formData.description)
       formDataToSend.append('levelNames', JSON.stringify(formData.levelNames))
       if (formData.file) {
@@ -408,7 +402,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                           <span className="text-2xl">📚</span>
                           <h2 className="text-xl font-semibold text-gray-900">{taxonomy.key}</h2>
                         </div>
-                        <p className="text-gray-700 font-medium">{taxonomy.displayName}</p>
+                        <p className="text-gray-700 font-medium">{taxonomy.key}</p>
                         {taxonomy.description && (
                           <p className="text-sm text-gray-600 mt-2">{taxonomy.description}</p>
                         )}
@@ -441,7 +435,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                           </p>
                         ))}
                         <p className="text-xs text-gray-500 mt-2">
-                          Created: {new Date(taxonomy.createdAt).toLocaleDateString()}
+                          Created: {formatDate(taxonomy.createdAt)}
                         </p>
                       </div>
                       <div className="grid gap-4 mt-4 md:grid-cols-2">
@@ -532,9 +526,9 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                             <h3 className="font-semibold text-gray-700">{taxonomy.key}</h3>
                             <span className="text-xs text-gray-500">(deleted)</span>
                           </div>
-                          <p className="text-sm text-gray-600">{taxonomy.displayName}</p>
+                          <p className="text-sm text-gray-600">{taxonomy.key}</p>
                           <p className="text-xs text-gray-500 mt-1">
-                            {taxonomy.nodeCount} nodes • Deleted: {new Date(taxonomy.updatedAt).toLocaleDateString()}
+                            {taxonomy.nodeCount} nodes • Deleted: {formatDate(taxonomy.updatedAt)}
                           </p>
                         </div>
                         <button
@@ -581,19 +575,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
                 />
                 <p className="text-xs text-gray-500 mt-1">ℹ️ Unique identifier, cannot be changed later</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Display Name *
-                </label>
-                <input
-                  type="text"
-                  value={formData.displayName}
-                  onChange={e => setFormData({...formData, displayName: e.target.value})}
-                  placeholder="e.g. International Standard Classification of Occupations"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
-                />
               </div>
 
               <div>
@@ -707,7 +688,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
               </button>
               <button
                 onClick={handleCreate}
-                disabled={submitting || !formData.key || !formData.displayName || !formData.file}
+                disabled={submitting || !formData.key || !formData.file}
                 className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {submitting ? 'Creating...' : 'Create & Import'}
@@ -741,18 +722,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                   value={formData.key}
                   disabled
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Display Name *
-                </label>
-                <input
-                  type="text"
-                  value={formData.displayName}
-                  onChange={e => setFormData({...formData, displayName: e.target.value})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
                 />
               </div>
 

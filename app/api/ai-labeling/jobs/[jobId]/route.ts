@@ -16,7 +16,7 @@ export async function GET(
     const job = await prisma.aILabelingJob.findUnique({
       where: { id: jobId },
       include: {
-        taxonomy: { select: { key: true, displayName: true } },
+        taxonomy: { select: { key: true } },
         createdBy: { select: { id: true, name: true, email: true } }
       }
     })

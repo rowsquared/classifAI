@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 import { parse } from 'csv-parse/sync'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { isUnknownNodeCode } from '@/lib/constants'
 
 const searchParamsSchema = z.object({ dryRun: z.coerce.boolean().default(true) })
 
@@ -57,13 +57,13 @@ export async function POST(
     const row = parsed.data
     
     // Validate that code is not -99 (reserved for UNKNOWN)
-    if (row.id === UNKNOWN_NODE_CODE) {
+    if (isUnknownNodeCode(row.id)) {
       errors.push({ row: idx + 2, message: 'Code -99 is reserved for UNKNOWN labels and cannot be used' })
       return
     }
     
     // Validate that parent_id is not -99
-    if (row.parent_id === UNKNOWN_NODE_CODE) {
+    if (isUnknownNodeCode(row.parent_id)) {
       errors.push({ row: idx + 2, message: 'Code -99 is reserved for UNKNOWN labels and cannot be used as parent_id' })
       return
     }

@@ -425,7 +425,7 @@ export default function ProgressPageClient({
         )}
 
         {/* Team Performance (Supervisor/Admin only) */}
-        {(session?.user?.role === 'supervisor' || session?.user?.role === 'admin') && team.length > 0 && (
+        {(userRole === 'supervisor' || userRole === 'admin') && team.length > 0 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Team Performance</h3>
             <div className="overflow-x-auto">

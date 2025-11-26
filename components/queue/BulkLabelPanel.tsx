@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import TaxonomyBrowser, { type Taxonomy, type SelectedLabel } from '../TaxonomyBrowser'
 import ResizablePanel from '../ResizablePanel'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { getUnknownCodeForLevel, isUnknownNodeCode } from '@/lib/constants'
 
 interface BulkLabelPanelProps {
   sentenceIds: string[]
@@ -19,10 +19,17 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
   const [flagged, setFlagged] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [labelingStartedAt] = useState<Date>(new Date()) // Record when bulk panel opened
+
   const [currentTaxonomyLevel, setCurrentTaxonomyLevel] = useState(1) // Current level being viewed in TaxonomyBrowser
 
   // Get active taxonomy
   const activeTaxonomy = taxonomies[activeTaxonomyIndex] || null
+
+  const actionButtonBaseClass = 'flex items-center gap-2 px-3 py-2 rounded-lg transition-colors'
+  const primaryActionClasses = 'bg-teal-600 text-white hover:bg-teal-700'
+  const commentActiveClasses = 'bg-[#A7ACD9] text-[#1f2238] hover:bg-[#9ea3cf]'
+  const flagActiveClasses = 'bg-[#F56476] text-white hover:bg-[#e8576a]'
+  const disabledSubmitClasses = 'bg-teal-600/40 text-white/85 cursor-not-allowed'
 
   // Load all active taxonomies
   useEffect(() => {
@@ -32,9 +39,8 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
         if (!res.ok) throw new Error('Failed to fetch taxonomies')
         const data = await res.json()
         if (data.ok && data.taxonomies.length > 0) {
-          const loadedTaxonomies = data.taxonomies.map((t: any) => ({
+          const loadedTaxonomies = data.taxonomies.map((t: { key: string; maxDepth?: number; levelNames?: Record<string, string> }) => ({
             key: t.key,
-            displayName: t.displayName,
             maxDepth: t.maxDepth || 5,
             levelNames: t.levelNames
           }))
@@ -57,7 +63,19 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
   }
 
   // Check if we have a leaf or unknown selected
-  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || l.nodeCode === UNKNOWN_NODE_CODE)
+  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf || isUnknownNodeCode(l.nodeCode))
+  const canSubmit = hasLeafOrUnknown && !submitting
+
+  const getTabColors = (index: number) => {
+    const colors = [
+      { active: 'text-teal-600' },
+      { active: 'text-[#3A67BB]' },
+      { active: 'text-[#A14A76]' },
+      { active: 'text-rose-600' },
+      { active: 'text-orange-600' }
+    ]
+    return colors[index % colors.length] || colors[0]
+  }
 
   // Handle Unknown
   const handleUnknown = () => {
@@ -72,7 +90,7 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
     // Add unknown at the current level
     const unknownLabel: SelectedLabel = {
       level: currentTaxonomyLevel,
-      nodeCode: UNKNOWN_NODE_CODE,
+      nodeCode: getUnknownCodeForLevel(currentTaxonomyLevel),
       taxonomyKey: activeTaxonomy.key,
       label: 'Unknown',
       isLeaf: true
@@ -164,7 +182,12 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
 
       // Call bulk label API
       // Note: flags and comments are already saved immediately when clicked/entered
-      const payload: any = {
+      const payload: {
+        sentenceIds: string[]
+        taxonomyKey: string
+        labelingStartedAt: string
+        annotations?: Array<{ level: number; nodeCode: string }>
+      } = {
         sentenceIds,
         taxonomyKey: activeTaxonomy.key,
         labelingStartedAt: labelingStartedAt.toISOString()
@@ -202,6 +225,7 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
       setSubmitting(false)
     }
   }
+
 
   if (taxonomies.length === 0) {
     return (
@@ -255,60 +279,56 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
 
           {/* Taxonomy Tabs */}
           {taxonomies.length > 1 && (
-            <div className="border-b border-gray-200 bg-gray-50">
-              <div className="flex items-center gap-1 px-4 py-2">
-                {taxonomies.map((tax, index) => {
-                  // Get tab colors based on taxonomy index (matches TaxonomyBrowser)
-                  const getTabColors = (idx: number) => {
-                    const colors = [
-                      { active: 'text-indigo-600' },  // Index 0: Primary/Teal
-                      { active: 'text-purple-600' },  // Index 1: Purple
-                      { active: 'text-pink-600' },    // Index 2: Pink
-                      { active: 'text-rose-600' },    // Index 3: Rose
-                      { active: 'text-orange-600' },  // Index 4: Orange
-                    ]
-                    return colors[idx % colors.length] || colors[0]
-                  }
-                  const tabColors = getTabColors(index)
-                  return (
-                    <button
-                      key={tax.key}
-                      onClick={() => handleTaxonomyTabChange(index)}
-                      className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-                        activeTaxonomyIndex === index
-                          ? `bg-white ${tabColors.active} border-t border-l border-r border-gray-200`
-                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                      }`}
-                    >
-                      {tax.key}
-                    </button>
-                  )
-                })}
+            <div className="bg-white border-b border-gray-200">
+              <div className="flex items-center justify-between px-4 pt-3">
+                <div className="flex gap-1">
+                  {taxonomies.map((tax, index) => {
+                    const tabColors = getTabColors(index)
+                    return (
+                      <button
+                        key={tax.key}
+                        onClick={() => handleTaxonomyTabChange(index)}
+                        className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative ${
+                          activeTaxonomyIndex === index
+                            ? `bg-white ${tabColors.active} border border-gray-200 border-b-0 -mb-px`
+                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        }`}
+                      >
+                        {tax.key}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             </div>
           )}
           
           {/* Taxonomy Browser */}
           {activeTaxonomy && (
-            <TaxonomyBrowser
-              key={activeTaxonomy.key} // Force remount when taxonomy changes to reset navigation state
-              taxonomy={activeTaxonomy}
-              selectedLabels={selectedLabels}
-              onLabelsChange={setSelectedLabels}
-              taxonomyIndex={activeTaxonomyIndex}
-              onCurrentLevelChange={setCurrentTaxonomyLevel}
-            />
+            <div
+              className={`flex-1 overflow-y-auto ${
+                taxonomies.length > 1 ? 'border-t border-gray-200 bg-white -mt-px' : ''
+              }`}
+            >
+              <TaxonomyBrowser
+                key={activeTaxonomy.key} // Force remount when taxonomy changes to reset navigation state
+                taxonomy={activeTaxonomy}
+                selectedLabels={selectedLabels}
+                onLabelsChange={setSelectedLabels}
+                taxonomyIndex={activeTaxonomyIndex}
+                onCurrentLevelChange={setCurrentTaxonomyLevel}
+                showTabs={taxonomies.length > 1}
+              />
+            </div>
           )}
 
           {/* Sticky Action Buttons */}
-          <div className="border-t p-4 bg-white">
+          <div className="p-4 bg-white">
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => setShowCommentDialog(true)}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                  comment 
-                    ? 'bg-green-200 text-green-800 hover:bg-green-300' 
-                    : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
+                className={`${actionButtonBaseClass} ${
+                  comment ? commentActiveClasses : primaryActionClasses
                 }`}
                 title="Add Comment"
               >
@@ -319,10 +339,8 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
               </button>
               <button
                 onClick={handleFlag}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                  flagged
-                    ? 'bg-red-200 text-red-800 hover:bg-red-300' 
-                    : 'bg-indigo-100 text-indigo-800 hover:bg-indigo-200'
+                className={`${actionButtonBaseClass} ${
+                  flagged ? flagActiveClasses : primaryActionClasses
                 }`}
                 title={flagged ? 'Unflag all selected sentences' : 'Flag all selected sentences'}
               >
@@ -333,7 +351,7 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
               </button>
               <button
                 onClick={handleUnknown}
-                className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-800 hover:bg-indigo-200 rounded-lg transition-colors"
+                className={`${actionButtonBaseClass} ${primaryActionClasses}`}
                 title="Unknown"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -344,7 +362,9 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
               <button
                 onClick={handleSkip}
                 disabled={submitting}
-                className="flex items-center gap-2 px-3 py-2 bg-indigo-100 text-indigo-800 hover:bg-indigo-200 rounded-lg transition-colors disabled:opacity-50"
+                className={`${actionButtonBaseClass} ${
+                  submitting ? disabledSubmitClasses : primaryActionClasses
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
                 title="Skip"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -355,11 +375,9 @@ export default function BulkLabelPanel({ sentenceIds, onClose, onSuccess }: Bulk
               <button
                 onClick={handleSubmit}
                 disabled={!hasLeafOrUnknown || submitting}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ml-auto ${
-                  hasLeafOrUnknown && !submitting
-                    ? 'bg-indigo-500 text-white hover:bg-indigo-600' 
-                    : 'bg-indigo-100 text-indigo-400 cursor-not-allowed'
-                }`}
+                className={`ml-auto flex items-center gap-2 rounded-lg px-4 py-2 transition-colors ${
+                  canSubmit ? primaryActionClasses : disabledSubmitClasses
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
                 title="Submit"
               >
                 <span className="text-sm font-medium">

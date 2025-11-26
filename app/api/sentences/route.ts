@@ -26,8 +26,15 @@ export async function GET(request: Request) {
     const level = searchParams.get('level') || ''
     const code = searchParams.get('code') || ''
     const source = searchParams.get('source') || '' // 'ai' or 'user'
+    const aiTaxonomyKey = searchParams.get('aiTaxonomyKey') || ''
+    const aiLevel = searchParams.get('aiLevel') || ''
+    const aiCode = searchParams.get('aiCode') || ''
+    const aiConfidenceMin = searchParams.get('aiConfidenceMin') || ''
+    const aiConfidenceMax = searchParams.get('aiConfidenceMax') || ''
     const flagged = searchParams.get('flagged') || ''
     const hasComments = searchParams.get('hasComments') || ''
+    const hasSubmittedLabels = searchParams.get('hasSubmittedLabels') || ''
+    const hasAISuggestions = searchParams.get('hasAISuggestions') || ''
     const sort = searchParams.get('sort') || 'createdAt'
     const order = searchParams.get('order') || 'asc'
     const page = parseInt(searchParams.get('page') || '1', 10)
@@ -168,6 +175,69 @@ export async function GET(request: Request) {
       where.AND!.push({ annotations: annotationFilter })
     }
     
+    // AI suggestion filters
+    if (aiTaxonomyKey || aiLevel || aiCode || aiConfidenceMin || aiConfidenceMax) {
+      const aiFilter: Prisma.SentenceAISuggestionWhereInput = {}
+      if (aiTaxonomyKey) {
+        aiFilter.taxonomy = { key: aiTaxonomyKey }
+      }
+      if (aiLevel) {
+        aiFilter.level = parseInt(aiLevel, 10)
+      }
+      if (aiCode) {
+        aiFilter.nodeCode = aiCode
+      }
+      const confidenceFilter: Prisma.FloatFilter = {}
+      if (aiConfidenceMin) {
+        const minVal = parseFloat(aiConfidenceMin)
+        if (!Number.isNaN(minVal)) {
+          confidenceFilter.gte = minVal
+        }
+      }
+      if (aiConfidenceMax) {
+        const maxVal = parseFloat(aiConfidenceMax)
+        if (!Number.isNaN(maxVal)) {
+          confidenceFilter.lte = maxVal
+        }
+      }
+      if (Object.keys(confidenceFilter).length > 0) {
+        aiFilter.confidenceScore = confidenceFilter
+      }
+      where.AND!.push({
+        aiSuggestions: {
+          some: aiFilter
+        }
+      })
+    }
+
+    if (hasSubmittedLabels === 'true') {
+      where.AND!.push({
+        annotations: {
+          some: {}
+        }
+      })
+    } else if (hasSubmittedLabels === 'false') {
+      where.AND!.push({
+        annotations: {
+          none: {}
+        }
+      })
+    }
+
+    if (hasAISuggestions === 'true') {
+      where.AND!.push({
+        aiSuggestions: {
+          some: {}
+        }
+      })
+    } else if (hasAISuggestions === 'false') {
+      where.AND!.push({
+        aiSuggestions: {
+          none: {}
+        }
+      })
+    }
+    
     // Flagged filter
     if (flagged === 'true') {
       where.AND!.push({ flagged: true })
@@ -226,83 +296,153 @@ export async function GET(request: Request) {
       orderBy = [{ id: order as 'asc' | 'desc' }]
     }
 
-    // Fetch sentences with pagination
-    const sentences = await prisma.sentence.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * limit,
-      take: limit,
-      include: {
-        annotations: {
-          include: {
-            taxonomy: {
-              select: { key: true, displayName: true }
-            }
-          }
-        },
-        comments: {
-          select: {
-            id: true,
-            body: true,
-            createdAt: true,
-            author: {
-              select: { name: true }
-            }
-          }
-        },
-        lastEditor: {
-          select: {
-            name: true,
-            email: true
-          }
-        },
-        assignments: {
-          select: {
-            user: {
-              select: {
-                id: true,
-                username: true,
-                name: true
+    // Fetch sentences + total count in parallel
+    const [sentences, total] = await Promise.all([
+      prisma.sentence.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          annotations: {
+            include: {
+              taxonomy: {
+                select: { key: true }
               }
             }
+          },
+          comments: {
+            select: {
+              id: true,
+              body: true,
+              createdAt: true,
+              author: {
+                select: { name: true }
+              }
+            }
+          },
+          lastEditor: {
+            select: {
+              name: true,
+              email: true
+            }
+          },
+          assignments: {
+            select: {
+              user: {
+                select: {
+                  id: true,
+                  username: true,
+                  name: true
+                }
+              }
+            }
+          },
+          _count: {
+            select: { comments: true }
+          }
+        }
+      }),
+      prisma.sentence.count({ where })
+    ])
+    
+    // Build sets for annotation nodes
+    const annotationTaxonomyIds = new Set<string>()
+    const annotationNodeCodes = new Set<string>()
+    sentences.forEach(sentence => {
+      sentence.annotations.forEach(annotation => {
+        annotationTaxonomyIds.add(annotation.taxonomyId)
+        annotationNodeCodes.add(annotation.nodeCode)
+      })
+    })
+    
+    const annotationNodesPromise = annotationTaxonomyIds.size > 0 && annotationNodeCodes.size > 0
+      ? prisma.taxonomyNode.findMany({
+          where: {
+            taxonomyId: { in: Array.from(annotationTaxonomyIds) },
+            code: { in: Array.from(annotationNodeCodes) }
+          },
+          select: {
+            taxonomyId: true,
+            code: true,
+            label: true
+          }
+        })
+      : Promise.resolve([])
+    
+    // Prepare AI suggestions fetch (only for sentences without annotations)
+    const sentencesWithoutAnnotations = sentences.filter(s => s.annotations.length === 0)
+    const aiSuggestionsPromise = (async () => {
+      if (sentencesWithoutAnnotations.length === 0) {
+        return {} as Record<string, any[]>
+      }
+      
+      const sentenceIds = sentencesWithoutAnnotations.map(s => s.id)
+      const aiSuggestions = await prisma.sentenceAISuggestion.findMany({
+        where: {
+          sentenceId: { in: sentenceIds }
+        },
+        include: {
+          taxonomy: {
+            select: { key: true }
           }
         },
-        _count: {
-          select: { comments: true }
+        orderBy: [
+          { taxonomyId: 'asc' },
+          { level: 'asc' }
+        ]
+      })
+      
+      if (aiSuggestions.length === 0) {
+        return {} as Record<string, any[]>
+      }
+      
+      const aiTaxonomyIds = new Set(aiSuggestions.map(s => s.taxonomyId))
+      const aiNodeCodes = new Set(aiSuggestions.map(s => s.nodeCode))
+      
+      const aiNodes = await prisma.taxonomyNode.findMany({
+        where: {
+          taxonomyId: { in: Array.from(aiTaxonomyIds) },
+          code: { in: Array.from(aiNodeCodes) }
+        },
+        select: {
+          taxonomyId: true,
+          code: true,
+          label: true
         }
-      }
-    })
+      })
+      
+      const aiNodeLabels = new Map(
+        aiNodes.map(n => [`${n.taxonomyId}-${n.code}`, n.label])
+      )
+      
+      return aiSuggestions.reduce((acc, suggestion) => {
+        if (!acc[suggestion.sentenceId]) {
+          acc[suggestion.sentenceId] = []
+        }
+        acc[suggestion.sentenceId].push({
+          id: suggestion.id,
+          level: suggestion.level,
+          nodeCode: suggestion.nodeCode,
+          nodeLabel: aiNodeLabels.get(`${suggestion.taxonomyId}-${suggestion.nodeCode}`) || null,
+          source: 'ai' as const,
+          taxonomy: {
+            key: suggestion.taxonomy.key,
+          },
+          confidenceScore: suggestion.confidenceScore
+        })
+        return acc
+      }, {} as Record<string, any[]>)
+    })()
     
-    // Fetch node labels for all annotations
-    const allNodeCodes = sentences.flatMap(s => 
-      s.annotations.map(a => ({ taxonomyId: a.taxonomyId, code: a.nodeCode }))
-    )
+    const [annotationNodes, aiSuggestionsBySentence] = await Promise.all([annotationNodesPromise, aiSuggestionsPromise])
     
-    const uniqueNodes = Array.from(
-      new Map(allNodeCodes.map(n => [`${n.taxonomyId}-${n.code}`, n])).values()
-    )
-    
-    const nodes = await prisma.taxonomyNode.findMany({
-      where: {
-        OR: uniqueNodes.map(n => ({
-          taxonomyId: n.taxonomyId,
-          code: n.code
-        }))
-      },
-      select: {
-        taxonomyId: true,
-        code: true,
-        label: true
-      }
-    })
-    
-    // Create lookup map
     const nodeLabels = new Map(
-      nodes.map(n => [`${n.taxonomyId}-${n.code}`, n.label])
+      annotationNodes.map(n => [`${n.taxonomyId}-${n.code}`, n.label])
     )
     
     // Attach labels to annotations
-    const sentencesWithLabels = sentences.map(s => ({
+    let sentencesWithLabels = sentences.map(s => ({
       ...s,
       annotations: s.annotations.map(a => ({
         ...a,
@@ -310,7 +450,17 @@ export async function GET(request: Request) {
       }))
     }))
     
-    const total = await prisma.sentence.count({ where })
+    // For sentences without submitted annotations, fetch AI suggestions
+    // Merge AI suggestions
+    sentencesWithLabels = sentencesWithLabels.map(s => {
+      if (s.annotations.length === 0 && aiSuggestionsBySentence[s.id]) {
+        return {
+          ...s,
+          annotations: aiSuggestionsBySentence[s.id]
+        }
+      }
+      return s
+    })
 
     return NextResponse.json({
       sentences: sentencesWithLabels,

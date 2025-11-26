@@ -133,6 +133,21 @@ export default function Sidebar() {
       href: '/admin/team',
       roles: ['admin']
     },
+    { 
+      icon: (
+        <svg className="w-full h-full" viewBox="0 -0.5 12 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path
+            d="M11.787 6.654l-2.895-1.03-1.081-3.403A.324.324 0 007.5 2c-.143 0-.27.09-.311.221l-1.08 3.404-2.897 1.03A.313.313 0 003 6.946c0 .13.085.248.212.293l2.894 1.03 1.082 3.507A.324.324 0 007.5 12c.144 0 .271-.09.312-.224L8.893 8.27l2.895-1.029A.313.313 0 0012 6.947a.314.314 0 00-.213-.293zM4.448 1.77l-1.05-.39-.39-1.05a.444.444 0 00-.833 0l-.39 1.05-1.05.39a.445.445 0 000 .833l1.05.389.39 1.051a.445.445 0 00.833 0l.39-1.051 1.05-.389a.445.445 0 000-.834z"
+            stroke="currentColor"
+            strokeWidth="0.75"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ),
+      label: 'AI Jobs', 
+      href: '/admin/ai-jobs',
+      roles: ['admin']
+    },
   ]
 
   // Get user from session
@@ -307,7 +322,7 @@ export default function Sidebar() {
             {/* Logout Menu */}
             {showLogoutMenu && (
               <div 
-                className="absolute bottom-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden"
+                className="absolute bottom-full bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-50"
                 style={{
                   left: collapsed ? `${SPACING}px` : `${SPACING}px`,
                   right: collapsed ? 'auto' : `${SPACING}px`,

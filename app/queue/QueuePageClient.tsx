@@ -1,12 +1,13 @@
 "use client"
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import PageHeader from '@/components/PageHeader'
-import FilterPanel, { type QueueFilters } from '@/components/queue/FilterPanel'
+import FilterPanel, { countActiveFilters, type QueueFilters } from '@/components/queue/FilterPanel'
 import QueueToolbar from '@/components/queue/QueueToolbar'
 import SentenceRow from '@/components/queue/SentenceRow'
 import PaginationControls from '@/components/queue/PaginationControls'
 import BulkLabelPanel from '@/components/queue/BulkLabelPanel'
 import AssignmentModal from '@/components/queue/AssignmentModal'
+import { ToastContainer, type Toast } from '@/components/Toast'
 
 export type Sentence = {
   id: string
@@ -36,7 +37,7 @@ export type Sentence = {
     nodeCode: string
     nodeLabel?: string | null
     source: 'user' | 'ai'
-    taxonomy: { key: string; displayName: string }
+    taxonomy: { key: string }
   }>
   comments?: Array<{
     id: string
@@ -69,8 +70,12 @@ export type Stats = {
 }
 
 export type Taxonomy = {
+  id?: string
   key: string
-  displayName: string
+  isActive?: boolean
+  levelNames?: Record<string, string> | null
+  lastAISyncStatus?: string | null
+  lastAISyncAt?: string | null
 }
 
 export type QueueUser = {
@@ -101,8 +106,15 @@ const DEFAULT_FILTERS: QueueFilters = {
   level: null,
   code: null,
   source: null,
+  aiTaxonomyKey: null,
+  aiLevel: null,
+  aiCode: null,
+  aiConfidenceMin: null,
+  aiConfidenceMax: null,
   flagged: null,
   hasComments: null,
+  hasSubmittedLabels: null,
+  hasAISuggestions: null,
   supportFilters: {}
 }
 
@@ -116,13 +128,21 @@ export default function QueuePageClient({
   currentUser
 }: QueuePageClientProps) {
   // UI State - remember filter panel state in localStorage
-  const [filterCollapsed, setFilterCollapsed] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('queueFilterCollapsed')
-      return saved !== null ? JSON.parse(saved) : true // Default to collapsed
-    }
-    return true
-  })
+  const [filterCollapsed, setFilterCollapsed] = useState(true)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const saved = localStorage.getItem('queueFilterCollapsed')
+    setFilterCollapsed(saved !== null ? JSON.parse(saved) : true)
+  }, [])
+  const toggleFilterPanel = useCallback(() => {
+    setFilterCollapsed(prev => {
+      const next = !prev
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('queueFilterCollapsed', JSON.stringify(next))
+      }
+      return next
+    })
+  }, [])
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'submitted' | 'skipped'>('pending')
   const [searchQuery, setSearchQuery] = useState('')
   const [bulkLabelOpen, setBulkLabelOpen] = useState(false)
@@ -137,9 +157,13 @@ export default function QueuePageClient({
   const [users] = useState<QueueUser[]>(initialUsers)
   const skipInitialQueueFetch = useRef(initialQueue !== null)
   const skipInitialStatsFetch = useRef(initialStatsPrefetched)
+  const [sendingToAI, setSendingToAI] = useState(false)
+  const [aiQueueStatus, setAiQueueStatus] = useState<{ current: string | null; remaining: string[] } | null>(null)
+  const cancelAIQueueRef = useRef(false)
   
   // Filter & Pagination State
   const [filters, setFilters] = useState<QueueFilters>(DEFAULT_FILTERS)
+  const activeFilterCount = useMemo(() => countActiveFilters(filters), [filters])
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(100)
   
@@ -148,6 +172,22 @@ export default function QueuePageClient({
   
   // Auto-refresh State
   const [lastRefresh, setLastRefresh] = useState(Date.now())
+  
+  // Toast notifications
+  const [toasts, setToasts] = useState<Toast[]>([])
+  const toastIdCounter = useRef(0)
+  
+  const addToast = useCallback((type: Toast['type'], message: string, duration?: number) => {
+    const id = `toast-${toastIdCounter.current++}`
+    setToasts(prev => [...prev, { id, type, message, duration }])
+  }, [])
+  
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id))
+  }, [])
+  
+  // Track active AI jobs to poll for completion
+  const [activeJobIds, setActiveJobIds] = useState<Set<string>>(new Set())
 
   // Fetch stats with current filters applied
   const fetchStats = useCallback(async () => {
@@ -168,7 +208,14 @@ export default function QueuePageClient({
       if (filters.taxonomyKey) params.set('taxonomyKey', filters.taxonomyKey)
       if (filters.level !== null) params.set('level', String(filters.level))
       if (filters.code !== null) params.set('code', String(filters.code))
+      if (filters.hasSubmittedLabels !== null) params.set('hasSubmittedLabels', String(filters.hasSubmittedLabels))
       if (filters.source) params.set('source', filters.source)
+      if (filters.aiTaxonomyKey) params.set('aiTaxonomyKey', filters.aiTaxonomyKey)
+      if (filters.aiLevel) params.set('aiLevel', filters.aiLevel)
+      if (filters.aiCode) params.set('aiCode', filters.aiCode)
+      if (filters.aiConfidenceMin !== null) params.set('aiConfidenceMin', filters.aiConfidenceMin)
+      if (filters.aiConfidenceMax !== null) params.set('aiConfidenceMax', filters.aiConfidenceMax)
+      if (filters.hasAISuggestions !== null) params.set('hasAISuggestions', String(filters.hasAISuggestions))
       if (filters.flagged !== null) params.set('flagged', String(filters.flagged))
       if (filters.hasComments !== null) params.set('hasComments', String(filters.hasComments))
       
@@ -223,7 +270,14 @@ export default function QueuePageClient({
       if (filters.taxonomyKey) params.set('taxonomyKey', filters.taxonomyKey)
       if (filters.level) params.set('level', filters.level)
       if (filters.code) params.set('code', filters.code)
+      if (filters.hasSubmittedLabels !== null) params.set('hasSubmittedLabels', String(filters.hasSubmittedLabels))
       if (filters.source) params.set('source', filters.source)
+      if (filters.aiTaxonomyKey) params.set('aiTaxonomyKey', filters.aiTaxonomyKey)
+      if (filters.aiLevel) params.set('aiLevel', filters.aiLevel)
+      if (filters.aiCode) params.set('aiCode', filters.aiCode)
+      if (filters.aiConfidenceMin !== null) params.set('aiConfidenceMin', filters.aiConfidenceMin)
+      if (filters.aiConfidenceMax !== null) params.set('aiConfidenceMax', filters.aiConfidenceMax)
+      if (filters.hasAISuggestions !== null) params.set('hasAISuggestions', String(filters.hasAISuggestions))
       if (filters.flagged !== null) params.set('flagged', String(filters.flagged))
       if (filters.hasComments !== null) params.set('hasComments', String(filters.hasComments))
       
@@ -365,39 +419,224 @@ export default function QueuePageClient({
 
   const allSelected = queue && queue.sentences.length > 0 && selectedIds.size === queue.sentences.length
   const someSelected = selectedIds.size > 0
+  const isAdmin = currentUser?.role === 'admin'
+  const activeTaxonomies = taxonomies.filter(t => t.isActive !== false)
+  const syncedTaxonomies = activeTaxonomies.filter(t => t.lastAISyncStatus === 'success')
+  // Show all taxonomies that are not successfully synced (any status other than 'success')
+  const unsyncedTaxonomies = activeTaxonomies.filter(t => t.lastAISyncStatus !== 'success')
+
+  const waitForAIJobCompletion = async (jobId: string, taxonomyLabel: string) => {
+    const maxAttempts = 200 // ~10 minutes at 3s interval
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const res = await fetch(`/api/ai-labeling/jobs/${jobId}`)
+        if (res.ok) {
+          const data = await res.json()
+          const status = data.job?.status
+          if (status && status !== 'pending' && status !== 'processing') {
+            return data.job
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to fetch AI job status for ${taxonomyLabel}:`, error)
+      }
+      await new Promise(resolve => setTimeout(resolve, 3000))
+    }
+    throw new Error(`AI job for ${taxonomyLabel} timed out.`)
+  }
+
+  const handleCancelPendingAIJobs = () => {
+    cancelAIQueueRef.current = true
+    addToast('info', 'Will cancel remaining AI jobs after the current one completes.', 4000)
+  }
+
+  const handleSendSelectedToAI = async () => {
+    if (selectedIds.size === 0) {
+      addToast('error', 'Select at least one sentence.')
+      return
+    }
+
+    if (activeTaxonomies.length === 0) {
+      addToast('error', 'No active taxonomies available.')
+      return
+    }
+
+    // Check all taxonomies that are not successfully synced (any status other than 'success')
+    const unsyncedTaxonomies = activeTaxonomies.filter(t => t.lastAISyncStatus !== 'success')
+    if (unsyncedTaxonomies.length > 0) {
+      const names = unsyncedTaxonomies.map(t => t.key).join(', ')
+      addToast('error', `Sync required before sending to AI: ${names}`)
+      return
+    }
+
+    const sentenceIdArray = Array.from(selectedIds)
+    if (sentenceIdArray.length === 0) {
+      addToast('error', 'Select at least one sentence.')
+      return
+    }
+
+    try {
+      setSendingToAI(true)
+      cancelAIQueueRef.current = false
+      const taxonomyKeys = activeTaxonomies.map(t => t.key)
+      setAiQueueStatus({ current: null, remaining: taxonomyKeys })
+
+      for (let i = 0; i < activeTaxonomies.length; i++) {
+        const taxonomy = activeTaxonomies[i]
+        if (cancelAIQueueRef.current) {
+          addToast('info', 'Cancelled remaining AI jobs. Current job will finish before stopping.', 4000)
+          break
+        }
+
+        setAiQueueStatus({
+          current: taxonomy.key,
+          remaining: taxonomyKeys.slice(i + 1)
+        })
+
+        const res = await fetch('/api/ai-labeling/jobs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            taxonomyKey: taxonomy.key,
+            sentenceIds: sentenceIdArray
+          })
+        })
+        const data = await res.json()
+        if (!res.ok) {
+          const errMessage = data.error || `Failed to start AI job for ${taxonomy.key}`
+          throw new Error(errMessage)
+        }
+        const jobId = data.job?.id || data.jobId
+        if (!jobId) {
+          throw new Error(`Missing job ID for ${taxonomy.key}`)
+        }
+
+        setActiveJobIds(prev => new Set(prev).add(jobId))
+        addToast('info', `AI job started for ${taxonomy.key}`, 3000)
+
+        try {
+          const completedJob = await waitForAIJobCompletion(jobId, taxonomy.key)
+          if (completedJob?.status === 'failed') {
+            addToast('error', `AI job failed for ${taxonomy.key}`, 4000)
+          } else {
+            addToast('success', `AI job completed for ${taxonomy.key}`, 4000)
+          }
+        } catch (jobError) {
+          console.error(jobError)
+          addToast('error', jobError instanceof Error ? jobError.message : String(jobError))
+        } finally {
+          setActiveJobIds(prev => {
+            const next = new Set(prev)
+            next.delete(jobId)
+            return next
+          })
+          setLastRefresh(Date.now())
+          await fetchQueue()
+        }
+      }
+      setSelectedIds(new Set())
+    } catch (error) {
+      console.error('Failed to send sentences to AI:', error)
+      addToast('error', error instanceof Error ? error.message : 'Failed to send to AI')
+    } finally {
+      setSendingToAI(false)
+      setAiQueueStatus(null)
+      cancelAIQueueRef.current = false
+    }
+  }
+  
+  // Poll for completed AI jobs and refresh queue
+  useEffect(() => {
+    if (activeJobIds.size === 0) return
+    
+    const pollInterval = setInterval(async () => {
+      try {
+        // Fetch all pending/processing jobs to see which are still active
+        const res = await fetch('/api/ai-labeling/jobs?status=pending&status=processing&limit=100')
+        if (res.ok) {
+          const data = await res.json()
+          const activeJobs = data.jobs || []
+          const activeJobIdSet = new Set(activeJobs.map((j: any) => j.id))
+          
+          // Find jobs that are no longer active (completed/failed/cancelled)
+          const completedJobIds = Array.from(activeJobIds).filter(id => !activeJobIdSet.has(id))
+          
+          if (completedJobIds.length > 0) {
+            // Fetch details of completed jobs
+            const completedRes = await fetch('/api/ai-labeling/jobs?status=completed&status=failed&status=cancelled&limit=100')
+            if (completedRes.ok) {
+              const completedData = await completedRes.json()
+              const completedJobs = (completedData.jobs || []).filter((job: any) => 
+                completedJobIds.includes(job.id)
+              )
+              
+              // Remove completed jobs from tracking
+              setActiveJobIds(prev => {
+                const next = new Set(prev)
+                completedJobIds.forEach(id => next.delete(id))
+                return next
+              })
+              
+              // Refresh queue to show new AI suggestions
+              setLastRefresh(Date.now())
+              await fetchQueue()
+              
+              // Show notification
+              const successCount = completedJobs.filter((j: any) => j.status === 'completed').length
+              if (successCount > 0) {
+                addToast('success', `AI labeling completed for ${successCount} job${successCount !== 1 ? 's' : ''}. Labels updated.`, 5000)
+              }
+              
+              const failedCount = completedJobs.filter((j: any) => j.status === 'failed').length
+              if (failedCount > 0) {
+                addToast('error', `${failedCount} AI labeling job${failedCount !== 1 ? 's' : ''} failed.`, 5000)
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to poll AI jobs:', error)
+      }
+    }, 5000) // Poll every 5 seconds
+    
+    return () => clearInterval(pollInterval)
+  }, [activeJobIds, fetchQueue, addToast])
+
+  const showStatusColumn = activeTab === 'all'
+  const contentWidthClass = showStatusColumn ? 'w-[40%]' : 'w-[45%]'
+  const labelWidthClass = showStatusColumn ? 'w-[18%]' : 'w-[20%]'
 
   return (
     <>
+      <ToastContainer toasts={toasts} onClose={removeToast} />
       <PageHeader 
         title="Queue"
       />
 
       <div className="flex h-[calc(100vh-66px)]">
         {/* Filter Panel */}
-        <FilterPanel
-          collapsed={filterCollapsed}
-          onToggle={() => {
-            const newState = !filterCollapsed
-            setFilterCollapsed(newState)
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('queueFilterCollapsed', JSON.stringify(newState))
-            }
-          }}
-          filters={filters}
-          onApply={handleApplyFilters}
-          onReset={handleResetFilters}
-          taxonomies={taxonomies}
-          users={users}
-          showAssignedToFilter={currentUser?.role === 'admin' || currentUser?.role === 'supervisor'}
-        />
+        {!filterCollapsed && (
+          <FilterPanel
+            collapsed={filterCollapsed}
+            onToggle={toggleFilterPanel}
+            filters={filters}
+            onApply={handleApplyFilters}
+            onReset={handleResetFilters}
+            taxonomies={taxonomies}
+            users={users}
+            showAssignedToFilter={currentUser?.role === 'admin' || currentUser?.role === 'supervisor'}
+          />
+        )}
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-white relative">
+        <div className="relative flex-1 flex flex-col overflow-hidden bg-white">
           {/* Toolbar */}
           <QueueToolbar
             searchQuery={searchQuery}
             onSearchChange={handleSearch}
             stats={stats}
+            onToggleFilters={toggleFilterPanel}
+            activeFilterCount={activeFilterCount}
           />
 
           {/* Tabs */}
@@ -441,7 +680,7 @@ export default function QueuePageClient({
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
                     <tr>
-              <th className="px-4 py-3 text-left w-12">
+                      <th className="pl-4 pr-2 py-3 text-left w-12">
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -449,10 +688,10 @@ export default function QueuePageClient({
                   className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
                 />
                       </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider w-[40%]">
-                        Content
+                      <th className={`pl-0 pr-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider ${contentWidthClass}`}>
+                        <span className="block pl-7">Content</span>
                       </th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider w-[18%]">
+                      <th className={`px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider ${labelWidthClass}`}>
                         Labels
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
@@ -466,12 +705,11 @@ export default function QueuePageClient({
                           Assigned
                         </th>
                       )}
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase tracking-wider w-12">
-                        
-                      </th>
+                      {showStatusColumn && (
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                          Status
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -482,6 +720,9 @@ export default function QueuePageClient({
                         selected={selectedIds.has(sentence.id)}
                         onSelect={(checked) => handleSelect(sentence.id, checked)}
                         showAssignedTo={currentUser?.role === 'admin' || currentUser?.role === 'supervisor'}
+                        showStatus={showStatusColumn}
+                        contentWidthClass={contentWidthClass}
+                        labelWidthClass={labelWidthClass}
                         taxonomies={taxonomies}
                         sentenceIds={queue.sentences.map(s => s.id)}
                         currentIndex={index}
@@ -536,6 +777,57 @@ export default function QueuePageClient({
                       Assign
                     </button>
                   )}
+                  {isAdmin && activeTaxonomies.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleSendSelectedToAI}
+                        disabled={
+                          sendingToAI ||
+                          selectedIds.size === 0 ||
+                          unsyncedTaxonomies.length > 0 ||
+                          syncedTaxonomies.length === 0
+                        }
+                        className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={
+                          unsyncedTaxonomies.length > 0
+                            ? 'Sync all taxonomies with AI before sending sentences.'
+                            : 'Send selected sentences to AI for all active taxonomies'
+                        }
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L4.5 21v-5.25M19.5 11.25l-7.5 5.25-7.5-5.25 7.5-5.25 7.5 5.25zM19.5 11.25V16.5M12 6v5.25" />
+                        </svg>
+                        {sendingToAI
+                          ? aiQueueStatus?.current
+                            ? `Sending ${aiQueueStatus.current}…`
+                            : 'Preparing…'
+                          : 'Send to AI'}
+                      </button>
+                      {!sendingToAI && unsyncedTaxonomies.length > 0 && (
+                        <span className="text-xs text-red-600 whitespace-nowrap">
+                          Sync required: {unsyncedTaxonomies.map(t => t.key).join(', ')}
+                        </span>
+                      )}
+                      {sendingToAI && aiQueueStatus && aiQueueStatus.remaining.length > 0 && (
+                        <button
+                          onClick={handleCancelPendingAIJobs}
+                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                        >
+                          Cancel remaining
+                        </button>
+                      )}
+                      {sendingToAI && aiQueueStatus && (
+                        <span className="text-xs text-gray-600 whitespace-nowrap">
+                          {aiQueueStatus.current
+                            ? `Currently sending ${aiQueueStatus.current}`
+                            : 'Starting AI job…'}
+                          {aiQueueStatus.remaining.length > 0 && (
+                            <> • {aiQueueStatus.remaining.length} remaining</>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={() => setSelectedIds(new Set())}
@@ -549,7 +841,7 @@ export default function QueuePageClient({
         </div>
       </div>
 
-      {/* Bulk Label Panel */}
+    {/* Bulk Label Panel */}
       {bulkLabelOpen && (
         <BulkLabelPanel
           sentenceIds={Array.from(selectedIds)}

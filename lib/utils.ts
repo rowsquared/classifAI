@@ -40,6 +40,24 @@ export function formatRelativeTime(date: string | null): string {
  */
 export function formatDateTime(date: string | null): string {
   if (!date) return 'Never'
-  return new Date(date).toLocaleString()
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) {
+    return 'Invalid date'
+  }
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+/**
+ * Format date to date-only string (YYYY-MM-DD)
+ */
+export function formatDate(date: string | Date | null): string {
+  if (!date) return 'Never'
+  const d = date instanceof Date ? date : new Date(date)
+  if (Number.isNaN(d.getTime())) {
+    return 'Invalid date'
+  }
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 

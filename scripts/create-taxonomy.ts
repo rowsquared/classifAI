@@ -7,7 +7,6 @@ async function main() {
     update: {},
     create: {
       key: 'ISCO',
-      displayName: 'International Standard Classification of Occupations',
       maxDepth: 5
     }
   })

@@ -31,10 +31,10 @@ export default async function QueuePage() {
     serverFetchJSON<{ ok: boolean; stats: Stats }>(`/api/sentences/stats`),
     serverFetchJSON<{ ok: boolean; taxonomies: Taxonomy[] }>(`/api/taxonomies/active`),
     session.user.role === 'admin' || session.user.role === 'supervisor'
-      ? serverFetchJSON<{ users: QueueUser[] }>(`/api/users`)
+      ? serverFetchJSON<{ users: QueueUser[] }>(`/api/users`, {}, { silent: true })
       : Promise.resolve(null),
     session.user.role === 'supervisor'
-      ? serverFetchJSON<{ user?: { labellers?: Array<{ id: string }> } }>(`/api/users/${session.user.id}`)
+      ? serverFetchJSON<{ user?: { labellers?: Array<{ id: string }> } }>(`/api/users/${session.user.id}`, {}, { silent: true })
       : Promise.resolve(null)
   ])
 

@@ -16,7 +16,7 @@ export async function POST(
     const { key } = await params
     const taxonomy = await prisma.taxonomy.findUnique({
       where: { key },
-      select: { id: true, key: true, displayName: true, description: true, maxDepth: true, levelNames: true }
+      select: { id: true, key: true, description: true, maxDepth: true, levelNames: true }
     })
 
     if (!taxonomy) {
@@ -49,10 +49,9 @@ export async function POST(
     })
 
     const payload = {
-      action: 'update',
+      action: 'create',
       taxonomy: {
         key: taxonomy.key,
-        displayName: taxonomy.displayName,
         description: taxonomy.description,
         maxDepth: taxonomy.maxDepth,
         levelNames: taxonomy.levelNames,

@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
         }
       },
       include: {
-        taxonomy: { select: { key: true, displayName: true } },
+        taxonomy: { select: { key: true } },
         createdBy: { select: { id: true, name: true, email: true } }
       }
     })
@@ -95,13 +95,16 @@ export async function GET(req: NextRequest) {
     }
 
     const searchParams = req.nextUrl.searchParams
-    const statusParam = searchParams.get('status')
+    const statusParams = searchParams.getAll('status')
     const page = Math.max(parseInt(searchParams.get('page') || '1', 10), 1)
     const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '20', 10), 1), 100)
 
     const where: any = {}
-    if (statusParam && statusSchema.safeParse(statusParam).success) {
-      where.status = statusParam
+    if (statusParams.length > 0) {
+      const validStatuses = statusParams.filter(s => statusSchema.safeParse(s).success)
+      if (validStatuses.length > 0) {
+        where.status = { in: validStatuses }
+      }
     }
 
     const [jobs, total] = await Promise.all([
@@ -111,7 +114,7 @@ export async function GET(req: NextRequest) {
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          taxonomy: { select: { key: true, displayName: true } },
+          taxonomy: { select: { key: true } },
           createdBy: { select: { id: true, name: true, email: true } }
         }
       }),

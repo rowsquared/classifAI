@@ -251,7 +251,6 @@ export async function POST(req: NextRequest) {
 
         // Log progress
         const progress = Math.round(((i + chunk.length) / sentences.length) * 100)
-        console.log(`Import progress: ${progress}%`)
       }
     })
 

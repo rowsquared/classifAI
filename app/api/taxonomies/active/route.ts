@@ -8,9 +8,10 @@ export async function GET() {
       select: {
         id: true,
         key: true,
-        displayName: true,
         maxDepth: true,
-        levelNames: true
+        levelNames: true,
+        isActive: true,
+        lastAISyncStatus: true
       },
       orderBy: { createdAt: 'asc' }
     })

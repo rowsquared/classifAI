@@ -2,6 +2,23 @@
 import { formatFieldName, formatRelativeTime, formatDateTime } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
 
+// Custom AI suggestion icon
+function SolidSparkle({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 12 12"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M11.787 6.654l-2.895-1.03-1.081-3.403A.324.324 0 007.5 2c-.143 0-.27.09-.311.221l-1.08 3.404-2.897 1.03A.313.313 0 003 6.946c0 .13.085.248.212.293l2.894 1.03 1.082 3.507A.324.324 0 007.5 12c.144 0 .271-.09.312-.224L8.893 8.27l2.895-1.029A.313.313 0 0012 6.947a.314.314 0 00-.213-.293zM4.448 1.77l-1.05-.39-.39-1.05a.444.444 0 00-.833 0l-.39 1.05-1.05.39a.445.445 0 000 .833l1.05.389.39 1.051a.445.445 0 00.833 0l.39-1.051 1.05-.389a.445.445 0 000-.834z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
+
 type Annotation = {
   id: string
   level: number
@@ -10,8 +27,8 @@ type Annotation = {
   source: 'user' | 'ai'
   taxonomy: {
     key: string
-    displayName: string
   }
+  confidenceScore?: number
 }
 
 type Comment = {
@@ -57,6 +74,9 @@ interface SentenceRowProps {
   selected: boolean
   onSelect: (checked: boolean) => void
   showAssignedTo?: boolean
+  showStatus?: boolean
+  contentWidthClass?: string
+  labelWidthClass?: string
   taxonomies?: Array<{ key: string }> // Ordered list of taxonomies to match color order
   sentenceIds?: string[] // List of sentence IDs in current view (for navigation)
   currentIndex?: number // Current index in the list
@@ -67,6 +87,9 @@ export default function SentenceRow({
   selected,
   onSelect,
   showAssignedTo = false,
+  showStatus = true,
+  contentWidthClass = 'w-[40%]',
+  labelWidthClass = 'w-[18%]',
   taxonomies = [],
   sentenceIds = [],
   currentIndex = 0
@@ -93,9 +116,9 @@ export default function SentenceRow({
       case 'pending':
         return 'bg-gray-100 text-gray-800'
       case 'submitted':
-        return 'bg-green-100 text-green-800'
+        return 'bg-[#E3EBFB] text-[#28498c]'
       case 'skipped':
-        return 'bg-yellow-100 text-yellow-800'
+        return 'bg-[#F7F3B3] text-[#4d470b]'
       default:
         return 'bg-gray-100 text-gray-800'
     }
@@ -157,11 +180,11 @@ export default function SentenceRow({
 
   // Color scheme for different taxonomies (matches TaxonomyBrowser)
   const taxonomyColors = [
-    'bg-indigo-100 text-indigo-700',  // Index 0: Primary/Teal
-    'bg-purple-100 text-purple-700',  // Index 1: Purple
-    'bg-pink-100 text-pink-700',      // Index 2: Pink
-    'bg-rose-100 text-rose-700',      // Index 3: Rose
-    'bg-orange-100 text-orange-700',   // Index 4: Orange
+    'bg-[#D3F2EE] text-[#005c5c]',   // Index 0: Primary/Teal
+    'bg-[#E3EBFB] text-[#28498c]',   // Index 1: Blue
+    'bg-[#F6E4EC] text-[#6d2c4a]',   // Index 2: Plum
+    'bg-rose-100 text-rose-700',     // Index 3: Rose fallback
+    'bg-orange-100 text-orange-700', // Index 4: Orange fallback
   ]
 
   const getTaxonomyColor = (taxonomyKey: string) => {
@@ -179,41 +202,58 @@ export default function SentenceRow({
   return (
     <tr
       onClick={handleRowClick}
-      className="hover:bg-indigo-50 cursor-pointer transition-colors border-b border-gray-100"
+      className="hover:bg-[#e6fbf8] cursor-pointer transition-colors border-b border-gray-100"
     >
       {/* Checkbox */}
-      <td className="px-4 py-3 w-12" onClick={(e) => e.stopPropagation()}>
+      <td className="pl-4 pr-2 py-3 w-12" onClick={(e) => e.stopPropagation()}>
         <input
           type="checkbox"
           checked={selected}
           onChange={(e) => onSelect(e.target.checked)}
-          className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
+          className="w-4 h-4 rounded border-gray-300 text-[#008080] focus:ring-2 focus:ring-[#008080] focus:ring-offset-0 cursor-pointer"
         />
       </td>
 
       {/* Content */}
-      <td className="px-4 py-3 w-[40%]">
-        <div className="flex items-start gap-2">
+      <td className={`pl-0 pr-4 py-3 ${contentWidthClass}`}>
+        <div className="flex items-stretch gap-2">
           {/* Icons at the beginning */}
-          <div className="flex items-center gap-1 flex-shrink-0 pt-0.5">
+          <div className="flex flex-col gap-1 self-stretch justify-center items-center flex-shrink-0 min-w-[20px]">
             {sentence.flagged && (
               <span
-                className="text-gray-500 cursor-help text-sm"
+                className="text-[#F56476] cursor-help"
                 title="Flagged"
               >
-                🚩
+                <svg className="w-4 h-4" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M4 2.2 L5.4 13.8"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M5 3
+                       C 8 1.5 10.5 3.5 13 2.5
+                       L 13 10
+                       C 10.5 11 8 9.5 5 10.5
+                       Z"
+                    fill="currentColor"
+                  />
+                </svg>
               </span>
             )}
             {commentCount > 0 && (
               <span
-                className="text-gray-500 cursor-help text-sm"
+                className="text-[#A7ACD9] cursor-help"
                 title={
                   sentence.comments && sentence.comments.length > 0
                     ? sentence.comments.map(c => `${c.author.name || 'Unknown'}: ${c.body}`).join('\n---\n')
                     : `${commentCount} comment(s)`
                 }
               >
-                💬
+                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M3 3h10a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H6l-3 3v-9a1 1 0 0 1 1-1z" />
+                </svg>
               </span>
             )}
           </div>
@@ -234,7 +274,7 @@ export default function SentenceRow({
       </td>
 
       {/* Labels */}
-      <td className="px-4 py-3 w-[18%]">
+      <td className={`px-4 py-3 ${labelWidthClass}`}>
         <div className="flex flex-col gap-1.5">
           {Object.keys(annotationsByTaxonomy).length > 0 ? (
             Object.entries(annotationsByTaxonomy).map(([taxonomyKey, annotations]) => (
@@ -242,12 +282,14 @@ export default function SentenceRow({
                 {annotations.map((ann, i) => (
                   <span
                     key={i}
-                    className={`text-xs px-2 py-1 rounded whitespace-nowrap ${getTaxonomyColor(taxonomyKey)}`}
+                    className={`text-xs px-2 py-0.5 rounded whitespace-nowrap flex items-center ${ann.source === 'ai' ? 'gap-0.5' : 'gap-1'} ${getTaxonomyColor(taxonomyKey)}`}
                     title={`${ann.taxonomy.key} L${ann.level}: ${ann.nodeCode}${
                       ann.nodeLabel ? ` - ${ann.nodeLabel}` : ''
-                    }`}
+                    }${ann.source === 'ai' && ann.confidenceScore !== undefined ? ` (AI confidence ${ann.confidenceScore.toFixed(2)})` : ''}`}
                   >
-                    {ann.source === 'ai' && '🤖 '}
+                    {ann.source === 'ai' && (
+                      <SolidSparkle className="w-3 h-3" />
+                    )}
                     {ann.nodeCode}
                   </span>
                 ))}
@@ -302,22 +344,13 @@ export default function SentenceRow({
       )}
 
       {/* Status */}
-      <td className="px-4 py-3 whitespace-nowrap">
-        <span className={`text-xs px-2 py-0.5 rounded ${getStatusColor(sentence.status)}`}>
-          {sentence.status}
-        </span>
-      </td>
-
-      {/* Action */}
-      <td className="px-4 py-3 text-center w-12">
-        <button
-          onClick={handleRowClick}
-          className="text-gray-400 hover:text-gray-600 transition-colors"
-          title="Open sentence"
-        >
-          →
-        </button>
-      </td>
+      {showStatus && (
+        <td className="px-4 py-3 whitespace-nowrap">
+          <span className={`text-xs px-2 py-0.5 rounded ${getStatusColor(sentence.status)}`}>
+            {sentence.status}
+          </span>
+        </td>
+      )}
     </tr>
   )
 }

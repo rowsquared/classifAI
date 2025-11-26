@@ -12,7 +12,7 @@ export function ensureAIConfig() {
   }
 }
 
-async function requestAI<T = any>(path: string, options: RequestInit): Promise<T> {
+async function requestAI<T = unknown>(path: string, options: RequestInit): Promise<T> {
   ensureAIConfig()
 
   const res = await fetch(`${API_URL}${path}`, {
@@ -32,7 +32,7 @@ async function requestAI<T = any>(path: string, options: RequestInit): Promise<T
   return res.json() as Promise<T>
 }
 
-export async function callAILabelingEndpoint<T = any>(path: string, payload: unknown): Promise<T> {
+export async function callAILabelingEndpoint<T = unknown>(path: string, payload: unknown): Promise<T> {
   return requestAI<T>(path, {
     method: 'POST',
     body: JSON.stringify(payload)
@@ -41,9 +41,9 @@ export async function callAILabelingEndpoint<T = any>(path: string, payload: unk
 
 export type AIJobStatusResponse = {
   status?: string
-  result?: any
+  result?: unknown
   error?: string
-  [key: string]: any
+  [key: string]: unknown
 }
 
 export type AIJobResult =
@@ -78,9 +78,10 @@ export async function waitForAIJobResult(jobId: string, statusPath: string): Pro
       if (normalized === 'failed' || normalized === 'error') {
         return { success: false, data: status, error: status.error || 'AI job failed' }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (Date.now() - startedAt >= AI_JOB_POLL_TIMEOUT_MS) {
-        return { success: false, error: error?.message || `AI job ${jobId} failed` }
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        return { success: false, error: errorMessage || `AI job ${jobId} failed` }
       }
       // continue polling after delay
     }

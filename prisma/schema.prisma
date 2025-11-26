@@ -52,7 +52,6 @@ model User {
 model Taxonomy {
   id           String   @id @default(cuid())
   key          String   @unique
-  displayName  String
   description  String?
   levelNames   Json?    // { "1": "Major Group", "2": "Sub-major", ... }
   maxDepth     Int      @default(5)

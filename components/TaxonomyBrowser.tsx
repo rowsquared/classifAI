@@ -1,8 +1,25 @@
 "use client"
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { Info } from 'lucide-react'
 import Tooltip from '@/components/Tooltip'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { isUnknownNodeCode } from '@/lib/constants'
+
+// Custom AI suggestion icon
+function SolidSparkle({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 12 12"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path
+        d="M11.787 6.654l-2.895-1.03-1.081-3.403A.324.324 0 007.5 2c-.143 0-.27.09-.311.221l-1.08 3.404-2.897 1.03A.313.313 0 003 6.946c0 .13.085.248.212.293l2.894 1.03 1.082 3.507A.324.324 0 007.5 12c.144 0 .271-.09.312-.224L8.893 8.27l2.895-1.029A.313.313 0 0012 6.947a.314.314 0 00-.213-.293zM4.448 1.77l-1.05-.39-.39-1.05a.444.444 0 00-.833 0l-.39 1.05-1.05.39a.445.445 0 000 .833l1.05.389.39 1.051a.445.445 0 00.833 0l.39-1.051 1.05-.389a.445.445 0 000-.834z"
+        fill="currentColor"
+      />
+    </svg>
+  )
+}
 
 export type TaxonomyNode = {
   code: string
@@ -20,11 +37,12 @@ export type SelectedLabel = {
   label?: string
   definition?: string
   isLeaf?: boolean
+  source?: 'user' | 'ai'
+  confidenceScore?: number
 }
 
 export type Taxonomy = {
   key: string
-  displayName: string
   maxDepth: number
   levelNames?: Record<string, string> | null
 }
@@ -36,6 +54,7 @@ interface TaxonomyBrowserProps {
   onNavigate?: (level: number, parent: string | null) => void
   taxonomyIndex?: number // Index of this taxonomy (0 = first, uses primary/teal color)
   onCurrentLevelChange?: (level: number) => void // Callback to expose current level to parent
+  showTabs?: boolean
 }
 
 export default function TaxonomyBrowser({
@@ -44,13 +63,33 @@ export default function TaxonomyBrowser({
   onLabelsChange,
   onNavigate,
   taxonomyIndex = 0,
-  onCurrentLevelChange
+  onCurrentLevelChange,
+  showTabs = false
 }: TaxonomyBrowserProps) {
   const [currentLevel, setCurrentLevel] = useState(1)
   const [currentParent, setCurrentParent] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [taxonomyNodes, setTaxonomyNodes] = useState<TaxonomyNode[]>([])
   const [breadcrumb, setBreadcrumb] = useState<TaxonomyNode[]>([])
+  const [isLoadingNodes, setIsLoadingNodes] = useState(true)
+  const hasInitializedRef = useRef(false)
+  const lastSelectedLabelsRef = useRef<string>('')
+  const initialAISuggestionRef = useRef<SelectedLabel[] | null>(null)
+  const initialAISuggestionSignatureRef = useRef<string | null>(null)
+  const normalizeLabels = (labels: SelectedLabel[]) =>
+    [...labels]
+      .filter(l => l.level > 0)
+      .sort((a, b) => a.level - b.level)
+      .map(l => ({ level: l.level, code: l.nodeCode }))
+
+  const arePathsEqual = (a: SelectedLabel[] | null, b: SelectedLabel[] | null) => {
+    if (!a || !b) return false
+    const normA = normalizeLabels(a)
+    const normB = normalizeLabels(b)
+    if (normA.length !== normB.length) return false
+    return normA.every((entry, idx) => entry.level === normB[idx].level && entry.code === normB[idx].code)
+  }
+
   const [showLevelNames, setShowLevelNames] = useState(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('showLevelNames')
@@ -71,41 +110,41 @@ export default function TaxonomyBrowser({
   // Index 0 uses primary/teal color, others use different colors
   const getTaxonomyColors = (index: number) => {
     const colors = [
-      // Index 0: Primary/Teal
+      // Index 0: Primary/Teal (#008080 family)
       {
-        chip: 'bg-indigo-100 text-indigo-800 border-indigo-200 hover:bg-indigo-200',
-        chipLevel: 'bg-indigo-200 text-indigo-700',
-        chipDelete: 'text-indigo-600 hover:text-indigo-900 hover:bg-indigo-200',
-        selectedBg: 'bg-indigo-50',
-        code: 'text-indigo-600',
-        codeSelected: 'text-indigo-600',
-        hoverBg: 'hover:bg-indigo-50',
-        indicator: 'text-indigo-600',
-        indicatorSelected: 'text-indigo-600'
+        chip: 'bg-[#D3F2EE] text-[#005c5c] border-[#a7e4db] hover:bg-[#bee8e1]',
+        chipLevel: 'bg-[#a7e4db] text-[#005c5c]',
+        chipDelete: 'text-[#008080] hover:text-[#005050] hover:bg-[#c9efea]',
+        selectedBg: 'bg-[#e6fbf8]',
+        code: 'text-[#008080]',
+        codeSelected: 'text-[#008080]',
+        hoverBg: 'hover:bg-[#edfdfa]',
+        indicator: 'text-[#008080]',
+        indicatorSelected: 'text-[#008080]'
       },
-      // Index 1: Purple
+      // Index 1: Blue (#3A67BB)
       {
-        chip: 'bg-purple-100 text-purple-800 border-purple-200 hover:bg-purple-200',
-        chipLevel: 'bg-purple-200 text-purple-700',
-        chipDelete: 'text-purple-600 hover:text-purple-900 hover:bg-purple-200',
-        selectedBg: 'bg-purple-50',
-        code: 'text-purple-600',
-        codeSelected: 'text-purple-600',
-        hoverBg: 'hover:bg-purple-50',
-        indicator: 'text-purple-600',
-        indicatorSelected: 'text-purple-600'
+        chip: 'bg-[#E3EBFB] text-[#28498c] border-[#c4d4f6] hover:bg-[#d4def8]',
+        chipLevel: 'bg-[#c4d4f6] text-[#28498c]',
+        chipDelete: 'text-[#3A67BB] hover:text-[#243f74] hover:bg-[#dbe4fb]',
+        selectedBg: 'bg-[#eff3fd]',
+        code: 'text-[#3A67BB]',
+        codeSelected: 'text-[#3A67BB]',
+        hoverBg: 'hover:bg-[#eff3fd]',
+        indicator: 'text-[#3A67BB]',
+        indicatorSelected: 'text-[#3A67BB]'
       },
-      // Index 2: Pink
+      // Index 2: Plum (#A14A76)
       {
-        chip: 'bg-pink-100 text-pink-800 border-pink-200 hover:bg-pink-200',
-        chipLevel: 'bg-pink-200 text-pink-700',
-        chipDelete: 'text-pink-600 hover:text-pink-900 hover:bg-pink-200',
-        selectedBg: 'bg-pink-50',
-        code: 'text-pink-600',
-        codeSelected: 'text-pink-600',
-        hoverBg: 'hover:bg-pink-50',
-        indicator: 'text-pink-600',
-        indicatorSelected: 'text-pink-600'
+        chip: 'bg-[#F6E4EC] text-[#6d2c4a] border-[#e7bfd1] hover:bg-[#f0d4df]',
+        chipLevel: 'bg-[#e7bfd1] text-[#6d2c4a]',
+        chipDelete: 'text-[#A14A76] hover:text-[#6b2747] hover:bg-[#f1d4e2]',
+        selectedBg: 'bg-[#fbf0f5]',
+        code: 'text-[#A14A76]',
+        codeSelected: 'text-[#A14A76]',
+        hoverBg: 'hover:bg-[#fbf0f5]',
+        indicator: 'text-[#A14A76]',
+        indicatorSelected: 'text-[#A14A76]'
       },
       // Index 3: Rose
       {
@@ -137,10 +176,140 @@ export default function TaxonomyBrowser({
 
   const colors = getTaxonomyColors(taxonomyIndex)
 
-  // Notify parent when current level changes
+  // Reset flags when taxonomy changes
   useEffect(() => {
-    onCurrentLevelChange?.(currentLevel)
-  }, [currentLevel, onCurrentLevelChange])
+    hasInitializedRef.current = false
+    lastSelectedLabelsRef.current = ''
+    setIsLoadingNodes(true)
+    setTaxonomyNodes([])
+    setCurrentLevel(1)
+    setCurrentParent(null)
+    initialAISuggestionRef.current = null
+    initialAISuggestionSignatureRef.current = null
+  }, [taxonomy.key])
+
+  // Cache initial AI suggestions when they first appear
+  useEffect(() => {
+    // Only cache if we don't already have cached AI suggestions (preserve original even after deletion)
+    if (initialAISuggestionRef.current !== null) {
+      return
+    }
+
+    // Find AI suggestions in the current selectedLabels
+    const aiLabels = selectedLabels.filter(label => label.source === 'ai')
+    
+    if (aiLabels.length > 0) {
+      const sortedAIPath = [...aiLabels].sort((a, b) => a.level - b.level)
+      const signature = JSON.stringify(normalizeLabels(sortedAIPath))
+      initialAISuggestionRef.current = sortedAIPath.map(label => ({ ...label }))
+      initialAISuggestionSignatureRef.current = signature
+    }
+  }, [selectedLabels])
+
+  useLayoutEffect(() => {
+    if (!taxonomy) return
+
+    const labelsSignature = JSON.stringify(
+      selectedLabels
+        .map(l => ({ level: l.level, code: l.nodeCode, taxonomy: l.taxonomyKey, isLeaf: l.isLeaf }))
+        .sort((a, b) => a.level - b.level || a.code.localeCompare(b.code))
+    )
+
+    if (hasInitializedRef.current && lastSelectedLabelsRef.current === labelsSignature) {
+      return
+    }
+
+    if (selectedLabels.length === 0) {
+      hasInitializedRef.current = true
+      lastSelectedLabelsRef.current = labelsSignature
+      if (currentLevel !== 1) {
+        setCurrentLevel(1)
+        onCurrentLevelChange?.(1)
+      }
+      if (currentParent !== null) {
+        setCurrentParent(null)
+      }
+      setBreadcrumb([])
+      onNavigate?.(1, null)
+      return
+    }
+
+    let nextLevel = 1
+    let nextParent: string | null = null
+
+    if (selectedLabels.length > 0) {
+      const sorted = [...selectedLabels].sort((a, b) => a.level - b.level)
+      const last = sorted[sorted.length - 1]
+      const prev = sorted.length > 1 ? sorted[sorted.length - 2] : undefined
+
+      if (last) {
+        const isLeaf = Boolean(last.isLeaf) || last.level >= (taxonomy.maxDepth || Number.MAX_SAFE_INTEGER)
+        if (isLeaf) {
+          nextLevel = last.level
+          nextParent = prev ? prev.nodeCode : null
+        } else {
+          nextLevel = Math.min(last.level + 1, taxonomy.maxDepth || last.level + 1)
+          nextParent = last.nodeCode
+        }
+      }
+    }
+
+    hasInitializedRef.current = true
+    lastSelectedLabelsRef.current = labelsSignature
+
+    const normalizedParent = nextParent ?? null
+    const levelChanged = currentLevel !== nextLevel
+    const parentChanged = (currentParent ?? null) !== normalizedParent
+
+    if (levelChanged) {
+      setCurrentLevel(nextLevel)
+      onCurrentLevelChange?.(nextLevel)
+    }
+    if (parentChanged) {
+      setCurrentParent(normalizedParent)
+    }
+
+    if (onNavigate && (levelChanged || parentChanged)) {
+      onNavigate(nextLevel, normalizedParent)
+    }
+  }, [selectedLabels, taxonomy, currentLevel, currentParent, onCurrentLevelChange, onNavigate])
+
+  // Build breadcrumb asynchronously after level is set
+  useEffect(() => {
+    if (selectedLabels.length === 0 || !hasInitializedRef.current) return
+    
+    const sortedLabels = [...selectedLabels]
+      .filter(l => l.level > 0)
+      .sort((a, b) => a.level - b.level)
+    
+    const buildBreadcrumb = async () => {
+      try {
+        const breadcrumbNodes: TaxonomyNode[] = []
+        const targetLevel = Math.max(...selectedLabels.map(l => l.level))
+        const labelsToShow = sortedLabels.filter(l => l.level < targetLevel)
+        
+        for (const label of labelsToShow) {
+          try {
+            const res = await fetch(`/api/taxonomies/${taxonomy.key}/nodes?level=${label.level}`)
+            if (res.ok) {
+              const data = await res.json()
+              const node = data.items?.find((n: TaxonomyNode) => n.code === label.nodeCode)
+              if (node) {
+                breadcrumbNodes.push(node)
+              }
+            }
+          } catch (error) {
+            console.error('Failed to fetch node for breadcrumb:', error)
+          }
+        }
+        setBreadcrumb(breadcrumbNodes)
+      } catch (error) {
+        console.error('Failed to build breadcrumb:', error)
+      }
+    }
+    
+    buildBreadcrumb()
+  }, [selectedLabels, taxonomy.key])
 
   // Toggle level names
   const toggleLevelNames = () => {
@@ -151,36 +320,54 @@ export default function TaxonomyBrowser({
     }
   }
 
-  // Load taxonomy nodes based on current level/parent or search
+  // Load taxonomy nodes for the current level (when not searching)
   useEffect(() => {
-    if (!taxonomy) return
-    
+    if (!taxonomy || searchQuery) return
+    const waitingForInitialization = selectedLabels.length > 0 && !hasInitializedRef.current
+    if (waitingForInitialization) return
+
+    let cancelled = false
+    setIsLoadingNodes(true)
+
+    const params = new URLSearchParams({
+      level: String(currentLevel)
+    })
+    if (currentParent !== null) {
+      params.set('parentCode', currentParent)
+    }
+
     const loadNodes = async () => {
       try {
-        const params = new URLSearchParams({
-          level: String(currentLevel)
-        })
-        if (currentParent !== null) {
-          params.set('parentCode', currentParent)
-        }
-
         const res = await fetch(`/api/taxonomies/${taxonomy.key}/nodes?${params}`)
         if (!res.ok) throw new Error('Failed to fetch nodes')
         const data = await res.json()
-        setTaxonomyNodes(data.items || [])
+        if (!cancelled) {
+          setTaxonomyNodes(data.items || [])
+        }
       } catch (error) {
-        console.error('Failed to load nodes:', error)
+        if (!cancelled) {
+          console.error('Failed to load nodes:', error)
+          setTaxonomyNodes([])
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingNodes(false)
+        }
       }
     }
 
     loadNodes()
-  }, [taxonomy, currentLevel, currentParent])
+    return () => {
+      cancelled = true
+    }
+  }, [taxonomy, currentLevel, currentParent, searchQuery, selectedLabels.length])
 
   // Search across all levels
   useEffect(() => {
-    if (!taxonomy || !searchQuery) {
-      return
-    }
+    if (!taxonomy || !searchQuery) return
+
+    let cancelled = false
+    setIsLoadingNodes(true)
 
     const searchNodes = async () => {
       try {
@@ -191,14 +378,26 @@ export default function TaxonomyBrowser({
         const res = await fetch(`/api/taxonomies/${taxonomy.key}/nodes?${params}`)
         if (!res.ok) throw new Error('Failed to search')
         const data = await res.json()
-        setTaxonomyNodes(data.items || [])
+        if (!cancelled) {
+          setTaxonomyNodes(data.items || [])
+        }
       } catch (error) {
-        console.error('Failed to search:', error)
+        if (!cancelled) {
+          console.error('Failed to search:', error)
+          setTaxonomyNodes([])
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingNodes(false)
+        }
       }
     }
 
-    const debounce = setTimeout(searchNodes, 300)
-    return () => clearTimeout(debounce)
+    const timer = setTimeout(searchNodes, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [taxonomy, searchQuery])
 
   // Build full path by recursively fetching parents
@@ -228,6 +427,24 @@ export default function TaxonomyBrowser({
     
     return path
   }
+  const storedAISuggestions = initialAISuggestionRef.current
+  const hasAISuggestions = Boolean(storedAISuggestions && storedAISuggestions.length > 0)
+  
+  // Check if we've diverged from AI suggestions:
+  // 1. User selected different labels (paths don't match)
+  // 2. User deleted some AI suggestions (current labels are subset or different)
+  const hasDivergedFromAISuggestions = hasAISuggestions && (
+    !arePathsEqual(selectedLabels, storedAISuggestions) ||
+    // Also show if user deleted AI suggestions (current labels don't include all cached AI labels)
+    selectedLabels.filter(l => l.source === 'ai').length < storedAISuggestions.length
+  )
+
+  const handleRestoreAISuggestions = () => {
+    if (!storedAISuggestions) return
+    const restored = storedAISuggestions.map(label => ({ ...label }))
+    onLabelsChange(restored)
+    setSearchQuery('')
+  }
 
   // Handle node click
   const handleNodeClick = async (node: TaxonomyNode) => {
@@ -252,17 +469,8 @@ export default function TaxonomyBrowser({
       
       onLabelsChange(newLabels)
       
-      // Clear search and navigate to children (if not a leaf)
+      // Clear search (navigation will be handled by effect)
       setSearchQuery('')
-      if (!isLeaf) {
-        setCurrentLevel(node.level + 1)
-        setCurrentParent(node.code)
-        onNavigate?.(node.level + 1, node.code)
-      } else {
-        // If it's a leaf, stay at this level
-        setCurrentLevel(node.level)
-        setCurrentParent(node.parentCode)
-      }
     } else {
       // Normal navigation mode
       const newLabel: SelectedLabel = {
@@ -289,12 +497,6 @@ export default function TaxonomyBrowser({
       }
       setBreadcrumb(newBreadcrumb)
       
-      // Navigate to children if not a leaf
-      if (!isLeaf) {
-        setCurrentLevel(node.level + 1)
-        setCurrentParent(node.code)
-        onNavigate?.(node.level + 1, node.code)
-      }
     }
   }
 
@@ -379,7 +581,11 @@ export default function TaxonomyBrowser({
       <div className="space-y-4 flex-shrink-0">
         {/* Selected Labels as Chips */}
         <div>
-          <h3 className="text-sm font-medium text-gray-700 mb-2">Selected Labels</h3>
+          {!showTabs && (
+            <h3 className="text-sm font-medium text-gray-700 mb-2">
+              {taxonomy.key}
+            </h3>
+          )}
           <div className="flex flex-wrap gap-2">
             {selectedLabels.length === 0 ? (
               <span className="text-gray-500 text-sm">No labels selected</span>
@@ -390,17 +596,27 @@ export default function TaxonomyBrowser({
                   const chipContent = (
                     <div
                       key={i}
-                      className={`inline-flex items-center px-3 py-1 rounded-full text-sm border cursor-pointer transition-colors ${colors.chip}`}
+                      className={`inline-flex items-center px-2 py-1 rounded text-sm border cursor-pointer transition-colors ${colors.chip}`}
                       onClick={() => handleChipClick(label)}
                     >
                       <span className={`text-xs px-2 py-0.5 rounded ${colors.chipLevel}`}>
                         L{label.level}
                       </span>
                       <span className="ml-2 font-medium">
-                        {label.nodeCode === UNKNOWN_NODE_CODE ? 'Unknown' : `${label.nodeCode} - ${label.label || 'Loading...'}`}
+                        {isUnknownNodeCode(label.nodeCode) ? 'Unknown' : `${label.nodeCode} - ${label.label || 'Loading...'}`}
                       </span>
                       {label.definition && (
                         <Info className="ml-1 w-3.5 h-3.5 text-gray-400 flex-shrink-0" strokeWidth={2.5} />
+                      )}
+                      {label.source === 'ai' && (
+                        <>
+                          <SolidSparkle className="ml-2 w-3 h-3 flex-shrink-0" />
+                          {label.confidenceScore !== undefined && (
+                            <span className="ml-1 text-xs font-medium">
+                              {label.confidenceScore.toFixed(2)}
+                            </span>
+                          )}
+                        </>
                       )}
                       <button
                         onClick={(e) => {
@@ -450,7 +666,7 @@ export default function TaxonomyBrowser({
 
         {/* Level Indicator & Navigation */}
         {!searchQuery && (
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between min-h-[32px]">
             <div className="flex items-center gap-2">
               <h4 className="text-sm font-medium text-gray-700">
                 {getLevelLabel(currentLevel)}
@@ -465,20 +681,49 @@ export default function TaxonomyBrowser({
                 </button>
               )}
             </div>
-            {breadcrumb.length > 0 && (
-              <button
-                onClick={() => handleBreadcrumbClick(breadcrumb.length - 2)}
-                className="text-gray-600 hover:text-gray-800 text-xs px-2 py-1 border rounded"
-              >
-                ↑ Up
-              </button>
-            )}
+            {/* Always reserve space for Up button to prevent layout shift */}
+            <div className="min-w-[120px] flex justify-end gap-2">
+              {hasDivergedFromAISuggestions && (
+                <button
+                  onClick={handleRestoreAISuggestions}
+                  className="text-gray-600 hover:text-gray-800 text-xs px-2 py-1 border rounded"
+                  title="Restore AI suggested labels"
+                >
+                  AI suggestion
+                </button>
+              )}
+              {currentLevel > 1 && (
+                <button
+                  onClick={() => {
+                    if (breadcrumb.length > 0) {
+                      handleBreadcrumbClick(breadcrumb.length - 2)
+                    } else {
+                      // Fallback: go up one level
+                      const parentLabel = selectedLabels.find(l => l.level === currentLevel - 1)
+                      if (parentLabel) {
+                        handleChipClick(parentLabel)
+                      } else {
+                        setCurrentLevel(currentLevel - 1)
+                        setCurrentParent(currentLevel > 2 ? selectedLabels.find(l => l.level === currentLevel - 2)?.nodeCode || null : null)
+                      }
+                    }
+                  }}
+                  className="text-gray-600 hover:text-gray-800 text-xs px-2 py-1 border rounded"
+                >
+                  ↑ Up
+                </button>
+              )}
+            </div>
           </div>
         )}
 
         {/* Taxonomy Nodes */}
         <div className="space-y-0 flex-1 overflow-y-auto border-t border-gray-200">
-          {taxonomyNodes.length === 0 ? (
+          {isLoadingNodes ? (
+            <div className="text-center py-8 text-gray-400">
+              <div className="text-sm">Loading...</div>
+            </div>
+          ) : taxonomyNodes.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
               {searchQuery ? (
                 <div>
@@ -515,19 +760,19 @@ export default function TaxonomyBrowser({
                       
                       {/* Label and definition */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className="text-[15px] text-gray-900 leading-snug">
+                        <div className="flex items-center gap-2 flex-wrap text-gray-900">
+                          <div className="text-[15px] leading-snug">
                             {node.label}
                           </div>
+                          {searchQuery && (
+                            <span className="inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded bg-gray-200 text-gray-700">
+                              L{node.level}
+                            </span>
+                          )}
                           {node.definition && (
                             <Info className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" strokeWidth={2.5} />
                           )}
                         </div>
-                        {searchQuery && (
-                          <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">
-                            {getLevelLabel(node.level)}
-                          </span>
-                        )}
                       </div>
                     </div>
                     

@@ -60,35 +60,65 @@ export default function LoginPage() {
               
               {/* Animated path highlight - all elements in a path highlight together */}
               <style>{`
-                @keyframes pathPulse1 {
-                  0%, 100% { opacity: 0.4; }
-                  0%, 33% { opacity: 0.75; }
-                  34%, 100% { opacity: 0.4; }
+                @keyframes pathPulse {
+                  0%, 100% { opacity: 0.35; }
+                  50% { opacity: 0.8; }
                 }
-                @keyframes pathPulse2 {
-                  0%, 33% { opacity: 0.4; }
-                  34%, 66% { opacity: 0.75; }
-                  67%, 100% { opacity: 0.4; }
+                .path-line-1, .path-node-1 {
+                  animation: pathPulse 12s ease-in-out infinite;
+                  animation-delay: 0s;
                 }
-                @keyframes pathPulse3 {
-                  0%, 66% { opacity: 0.4; }
-                  67%, 100% { opacity: 0.75; }
+                .path-line-2, .path-node-2 {
+                  animation: pathPulse 12s ease-in-out infinite;
+                  animation-delay: 4s;
                 }
-                .path-line-1 { animation: pathPulse1 12s ease-in-out infinite; }
-                .path-node-1 { animation: pathPulse1 12s ease-in-out infinite; }
-                .path-line-2 { animation: pathPulse2 12s ease-in-out infinite; }
-                .path-node-2 { animation: pathPulse2 12s ease-in-out infinite; }
-                .path-line-3 { animation: pathPulse3 12s ease-in-out infinite; }
-                .path-node-3 { animation: pathPulse3 12s ease-in-out infinite; }
+                .path-line-3, .path-node-3 {
+                  animation: pathPulse 12s ease-in-out infinite;
+                  animation-delay: 8s;
+                }
+                
+                /* Icon animations - subtle scale and color sync with paths */
+                @keyframes iconScale {
+                  0%, 100% { transform: scale(1); }
+                  50% { transform: scale(1.08); }
+                }
+                @keyframes iconColorPulse1 {
+                  0%, 100% { stroke: rgba(255, 255, 255, 0.7); }
+                  0%, 33% { stroke: rgba(255, 255, 255, 0.95); }
+                  34%, 100% { stroke: rgba(255, 255, 255, 0.7); }
+                }
+                @keyframes iconColorPulse2 {
+                  0%, 33% { stroke: rgba(255, 255, 255, 0.7); }
+                  34%, 66% { stroke: rgba(255, 255, 255, 0.95); }
+                  67%, 100% { stroke: rgba(255, 255, 255, 0.7); }
+                }
+                @keyframes iconColorPulse3 {
+                  0%, 66% { stroke: rgba(255, 255, 255, 0.7); }
+                  67%, 100% { stroke: rgba(255, 255, 255, 0.95); }
+                }
+            .brain-icon {
+              animation: iconScale 4s ease-in-out infinite;
+              margin-bottom: 32px;
+            }
+            .chip-icon {
+              animation: iconScale 4s ease-in-out infinite 2s;
+              margin-bottom: 32px;
+            }
+                .brain-icon-svg {
+                  animation: iconColorPulse1 12s ease-in-out infinite;
+                }
+                .chip-icon-svg {
+                  animation: iconColorPulse3 12s ease-in-out infinite;
+                }
               `}</style>
             </defs>
             
             {/* Root Level - Brain/AI Split using Lucide icons */}
-            <g transform="translate(300, 100)">
-              {/* Left side - Brain icon (white, larger) */}
-              <foreignObject x="-50" y="-25" width="50" height="50">
-                <div className="flex items-center justify-center w-full h-full">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <g transform="translate(300, 80)">
+              {/* Left side - Brain icon (white, larger, further from tree) */}
+              <foreignObject x="-80" y="-35" width="64" height="64">
+                <div className="flex items-center justify-center w-full h-full brain-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="brain-icon-svg">
                     <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
                     <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
                     <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
@@ -102,10 +132,10 @@ export default function LoginPage() {
                 </div>
               </foreignObject>
               
-              {/* Right side - Chip/CPU icon (white, larger) */}
-              <foreignObject x="0" y="-25" width="50" height="50">
-                <div className="flex items-center justify-center w-full h-full">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {/* Right side - Chip/CPU icon (white, larger, further from tree) */}
+              <foreignObject x="20" y="-35" width="64" height="64">
+                <div className="flex items-center justify-center w-full h-full chip-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="chip-icon-svg">
                     <rect width="14" height="14" x="5" y="5" rx="2"/>
                     <rect width="6" height="6" x="9" y="9" rx="1"/>
                     <path d="M15 2v2"/>
@@ -145,12 +175,12 @@ export default function LoginPage() {
             
             {/* Right branch - 3 children */}
             <line x1="420" y1="240" x2="360" y2="300" stroke="white" strokeWidth="2" opacity="0.25"/>
-            <line x1="420" y1="240" x2="420" y2="300" stroke="white" strokeWidth="2" opacity="0.4" className="path-line-3"/>
-            <line x1="420" y1="240" x2="480" y2="300" stroke="white" strokeWidth="2" opacity="0.25"/>
+            <line x1="420" y1="240" x2="420" y2="300" stroke="white" strokeWidth="2" opacity="0.25"/>
+            <line x1="420" y1="240" x2="480" y2="300" stroke="white" strokeWidth="2" opacity="0.4" className="path-line-3"/>
             
             <rect x="335" y="300" width="50" height="35" rx="8" fill="white" opacity="0.35"/>
-            <rect x="395" y="300" width="50" height="35" rx="8" fill="white" opacity="0.6" className="path-node-3" filter="url(#glow)"/>
-            <rect x="455" y="300" width="50" height="35" rx="8" fill="white" opacity="0.35"/>
+            <rect x="395" y="300" width="50" height="35" rx="8" fill="white" opacity="0.35"/>
+            <rect x="455" y="300" width="50" height="35" rx="8" fill="white" opacity="0.6" className="path-node-3" filter="url(#glow)"/>
           </svg>
         </div>
 
@@ -227,32 +257,30 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Footer text */}
-          <p className="mt-8 text-sm text-gray-500">
-            Contact your administrator if you need access
-          </p>
         </div>
 
         {/* R2 Footer Logo - Bottom Right */}
-        <div className="absolute bottom-8 right-8">
-          <a 
-            href="https://rowsquared.com" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="block hover:opacity-100 transition-opacity"
-            style={{ 
-              width: '160px',
-              opacity: 0.6
-            }}
-          >
-            <Image
-              src="/r2-footer.svg"
-              alt="Made with ❤️ by R2"
-              width={160}
-              height={27}
-              className="w-full h-auto"
-            />
-          </a>
+        <div className="absolute bottom-8 inset-x-0 px-8 flex justify-center">
+          <div className="w-full max-w-md flex justify-end">
+            <a 
+              href="https://rowsquared.com" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="block hover:opacity-100 transition-opacity"
+              style={{ 
+                width: '160px',
+                opacity: 0.6
+              }}
+            >
+              <Image
+                src="/r2-footer.svg"
+                alt="Made with ❤️ by R2"
+                width={160}
+                height={27}
+                className="w-full h-auto"
+              />
+            </a>
+          </div>
         </div>
       </div>
     </div>

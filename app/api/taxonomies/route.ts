@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { parse } from 'csv-parse/sync'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { isUnknownNodeCode } from '@/lib/constants'
 
 const MAX_ACTIVE_TAXONOMIES = 3
 
@@ -86,17 +86,16 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData()
     
     const key = formData.get('key') as string
-    const displayName = formData.get('displayName') as string
     const description = formData.get('description') as string | null
     const maxDepth = parseInt(formData.get('maxDepth') as string)
     const levelNamesStr = formData.get('levelNames') as string | null
     const file = formData.get('file') as File
 
     // Validation
-    if (!key || !displayName || !maxDepth || !file) {
+    if (!key || !maxDepth || !file) {
       return NextResponse.json({ 
         ok: false, 
-        error: 'Missing required fields: key, displayName, maxDepth, file' 
+        error: 'Missing required fields: key, maxDepth, file' 
       }, { status: 400 })
     }
 
@@ -165,7 +164,7 @@ export async function POST(req: NextRequest) {
     // Validate that no code is -99 (reserved for UNKNOWN)
     for (const record of records) {
       const code = String(record.id).trim()
-      if (code === UNKNOWN_NODE_CODE) {
+      if (isUnknownNodeCode(code)) {
         return NextResponse.json({ 
           ok: false, 
           error: 'Code -99 is reserved for UNKNOWN labels and cannot be used in taxonomy imports' 
@@ -175,7 +174,7 @@ export async function POST(req: NextRequest) {
       // Also check parent_id
       if (record.parent_id && String(record.parent_id).trim()) {
         const parentCode = String(record.parent_id).trim()
-        if (parentCode === UNKNOWN_NODE_CODE) {
+        if (isUnknownNodeCode(parentCode)) {
           return NextResponse.json({ 
             ok: false, 
             error: 'Code -99 is reserved for UNKNOWN labels and cannot be used as a parent_id' 
@@ -244,7 +243,6 @@ export async function POST(req: NextRequest) {
       const taxonomy = await tx.taxonomy.create({
         data: {
           key,
-          displayName,
           description: description || null,
           maxDepth,
           levelNames: levelNames || undefined,

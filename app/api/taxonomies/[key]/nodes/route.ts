@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ key:
   }
   if (q) {
     where.OR = [
-      { code: q },
+      { code: { startsWith: q, mode: 'insensitive' } },
       { label: { contains: q, mode: 'insensitive' } },
     ]
   }

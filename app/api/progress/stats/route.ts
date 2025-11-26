@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { auth } from '@/lib/auth'
-import { UNKNOWN_NODE_CODE } from '@/lib/constants'
+import { UNKNOWN_NODE_CODE_SET } from '@/lib/constants'
 
 /**
  * GET /api/progress/stats?startDate=...&endDate=...
@@ -305,7 +305,9 @@ export async function GET(req: NextRequest) {
       by: ['level'],
       where: {
         ...annotationWhere,
-        nodeCode: UNKNOWN_NODE_CODE
+        nodeCode: {
+          in: Array.from(UNKNOWN_NODE_CODE_SET)
+        }
       },
       _count: {
         id: true
