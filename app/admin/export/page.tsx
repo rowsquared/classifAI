@@ -4,10 +4,26 @@ import PageHeader from '@/components/PageHeader'
 
 export default function ExportAdminPage() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [dateRange, setDateRange] = useState('all')
+  const [exporting, setExporting] = useState(false)
 
   const handleExport = async () => {
     try {
-      const res = await fetch('/api/export')
+      setExporting(true)
+      setMessage(null)
+      
+      const params = new URLSearchParams()
+      if (statusFilter !== 'all') {
+        params.append('status', statusFilter)
+      }
+      if (dateRange !== 'all') {
+        params.append('dateRange', dateRange)
+      }
+      
+      const url = `/api/export${params.toString() ? '?' + params.toString() : ''}`
+      const res = await fetch(url)
+      
       if (res.ok) {
         const blob = await res.blob()
         const url = window.URL.createObjectURL(blob)
@@ -15,12 +31,16 @@ export default function ExportAdminPage() {
         a.href = url
         a.download = `export-${new Date().toISOString()}.csv`
         a.click()
+        window.URL.revokeObjectURL(url)
         setMessage({ type: 'success', text: 'Export downloaded successfully!' })
       } else {
-        setMessage({ type: 'error', text: 'Export failed' })
+        const error = await res.json().catch(() => ({ error: 'Export failed' }))
+        setMessage({ type: 'error', text: error.error || 'Export failed' })
       }
     } catch (error) {
       setMessage({ type: 'error', text: 'Export failed' })
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -30,7 +50,7 @@ export default function ExportAdminPage() {
       <div className="px-8 py-8">
         <div className="mb-8">
           <p className="text-sm text-gray-600">
-            Export labeled sentences with annotations
+            Export labeled sentences with annotations, AI suggestions, and metadata
           </p>
         </div>
 
@@ -47,7 +67,7 @@ export default function ExportAdminPage() {
 
         {/* Export Data */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-6">
             <span className="text-2xl">📥</span>
             <h2 className="text-lg font-semibold text-gray-900">Export Labeled Data</h2>
           </div>
@@ -58,8 +78,12 @@ export default function ExportAdminPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Status Filter
                 </label>
-                <select className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                  <option value="">All</option>
+                <select 
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="all">All</option>
                   <option value="submitted">Submitted Only</option>
                   <option value="pending">Pending Only</option>
                   <option value="skipped">Skipped Only</option>
@@ -70,8 +94,12 @@ export default function ExportAdminPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Date Range
                 </label>
-                <select className="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                  <option value="">All Time</option>
+                <select 
+                  value={dateRange}
+                  onChange={(e) => setDateRange(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="all">All Time</option>
                   <option value="today">Today</option>
                   <option value="week">Last 7 Days</option>
                   <option value="month">Last 30 Days</option>
@@ -79,19 +107,24 @@ export default function ExportAdminPage() {
               </div>
             </div>
 
-            <button
-              onClick={handleExport}
-              className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-            >
-              Export CSV
-            </button>
+            <div className="flex justify-end pt-4">
+              <button
+                onClick={handleExport}
+                disabled={exporting}
+                className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {exporting ? 'Exporting...' : 'Export CSV'}
+              </button>
+            </div>
           </div>
 
           <div className="mt-6 pt-6 border-t border-gray-200">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Export Format</h3>
             <p className="text-xs text-gray-600">
-              The exported CSV will include: sentence ID, all field columns, annotations (taxonomy code, level), 
-              status, comments, flags, editor, and timestamps.
+              The exported CSV includes: sentence ID, original field columns (field_FIELD_NAME format), 
+              support columns, labeled taxonomies ({'{taxonomyKey}'}_1, {'{taxonomyKey}'}_2, etc.), 
+              AI suggestions ({'{taxonomyKey}'}_ai1, {'{taxonomyKey}'}_ai2 with confidence scores), 
+              status, flagged, last_editor, last_edited, and comments.
             </p>
           </div>
         </div>

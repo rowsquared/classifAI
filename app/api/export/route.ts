@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Fetch sentences with annotations
+    // Fetch sentences with annotations, AI suggestions, and related data
     const sentences = await prisma.sentence.findMany({
       where,
       include: {
@@ -74,6 +74,20 @@ export async function GET(req: NextRequest) {
               }
             }
           }
+        },
+        aiSuggestions: {
+          include: {
+            taxonomy: {
+              select: {
+                key: true,
+                maxDepth: true
+              }
+            }
+          },
+          orderBy: [
+            { taxonomyId: 'asc' },
+            { level: 'asc' }
+          ]
         },
         comments: {
           select: {
@@ -94,7 +108,7 @@ export async function GET(req: NextRequest) {
       ]
     })
 
-    // Group taxonomies to determine max depth for each
+    // Group taxonomies to determine max depth for each (from both annotations and AI suggestions)
     const taxonomies: Record<string, number> = {}
     for (const sentence of sentences) {
       for (const ann of sentence.annotations) {
@@ -102,50 +116,76 @@ export async function GET(req: NextRequest) {
           taxonomies[ann.taxonomy.key] = ann.taxonomy.maxDepth || 5
         }
       }
+      for (const aiSuggestion of sentence.aiSuggestions) {
+        if (!taxonomies[aiSuggestion.taxonomy.key]) {
+          taxonomies[aiSuggestion.taxonomy.key] = aiSuggestion.taxonomy.maxDepth || 5
+        }
+      }
     }
 
     // Build CSV header
     const headers: string[] = ['id']
     
-    // Add field columns dynamically (check first sentence to see what's populated)
-    const fieldColumns: string[] = []
-    const supportColumns: string[] = []
+    // Collect all unique field and support column names across all sentences
+    const allFieldColumns = new Set<string>()
+    const allSupportColumns = new Set<string>()
+    const fieldColumnOrder: string[] = []
+    const supportColumnOrder: string[] = []
     
-    if (sentences.length > 0) {
-      const firstSentence = sentences[0]
-      const fieldMapping = firstSentence.fieldMapping as Record<string, string>
-      const supportMapping = (firstSentence.supportMapping as Record<string, string>) || {}
+    // Determine which columns exist and their order
+    for (const sentence of sentences) {
+      const fieldMapping = sentence.fieldMapping as Record<string, string>
+      const supportMapping = (sentence.supportMapping as Record<string, string>) || {}
       
-      // Field columns (1-5)
+      // Field columns (1-5) - use format field_FIELD_NAME
       for (let i = 1; i <= 5; i++) {
-        const field = `field${i}` as keyof typeof firstSentence
-        if (firstSentence[field]) {
-          const columnName = fieldMapping[`field${i}`] || `field${i}`
-          fieldColumns.push(columnName)
-          headers.push(columnName)
+        const fieldKey = `field${i}`
+        const fieldValue = sentence[fieldKey as keyof typeof sentence]
+        if (fieldValue) {
+          const originalColumnName = fieldMapping[fieldKey] || fieldKey
+          const columnName = `field_${originalColumnName}`
+          if (!allFieldColumns.has(columnName)) {
+            allFieldColumns.add(columnName)
+            fieldColumnOrder.push(columnName)
+          }
         }
       }
       
-      // Support columns (1-5)
+      // Support columns (1-5) - keep original names
       for (let i = 1; i <= 5; i++) {
-        const support = `support${i}` as keyof typeof firstSentence
-        if (firstSentence[support]) {
-          const columnName = supportMapping[`support${i}`] || `support${i}`
-          supportColumns.push(columnName)
-          headers.push(columnName)
+        const supportKey = `support${i}`
+        const supportValue = sentence[supportKey as keyof typeof sentence]
+        if (supportValue) {
+          const originalColumnName = supportMapping[supportKey] || supportKey
+          if (!allSupportColumns.has(originalColumnName)) {
+            allSupportColumns.add(originalColumnName)
+            supportColumnOrder.push(originalColumnName)
+          }
         }
       }
     }
+    
+    // Add field columns to headers
+    headers.push(...fieldColumnOrder)
+    // Add support columns to headers
+    headers.push(...supportColumnOrder)
 
-    // Add annotation columns for each taxonomy (one column per level)
+    // Add annotation columns for each taxonomy (one column per level) - format: {taxonomyKey}_{level}
     for (const [taxonomyKey, maxDepth] of Object.entries(taxonomies)) {
       for (let level = 1; level <= maxDepth; level++) {
-        headers.push(`${taxonomyKey}_L${level}`)
+        headers.push(`${taxonomyKey}_${level}`)
+      }
+    }
+
+    // Add AI suggestion columns for each taxonomy - format: {taxonomyKey}_ai{level} and {taxonomyKey}_ai{level}c
+    for (const [taxonomyKey, maxDepth] of Object.entries(taxonomies)) {
+      for (let level = 1; level <= maxDepth; level++) {
+        headers.push(`${taxonomyKey}_ai${level}`, `${taxonomyKey}_ai${level}c`)
       }
     }
 
     // Add metadata columns
-    headers.push('status', 'flagged', 'lastEditor', 'lastEditedAt', 'comments')
+    headers.push('status', 'flagged', 'last_editor', 'last_edited', 'comments')
 
     // Build CSV rows
     const rows: string[][] = [headers]
@@ -153,33 +193,54 @@ export async function GET(req: NextRequest) {
     for (const sentence of sentences) {
       const row: string[] = [sentence.id]
 
-      // Add field values
       const fieldMapping = sentence.fieldMapping as Record<string, string>
-      for (let i = 1; i <= 5; i++) {
-        const field = `field${i}` as keyof typeof sentence
-        const columnName = fieldMapping[`field${i}`]
-        if (columnName && fieldColumns.includes(columnName)) {
-          const value = sentence[field]
-          row.push(value ? String(value).replace(/"/g, '""') : '')
+      const supportMapping = (sentence.supportMapping as Record<string, string>) || {}
+
+      // Add field values - use field_FIELD_NAME format
+      for (const columnName of fieldColumnOrder) {
+        // Extract the original field name from field_FIELD_NAME
+        const originalFieldName = columnName.replace(/^field_/, '')
+        // Find which field number this corresponds to
+        let found = false
+        for (let i = 1; i <= 5; i++) {
+          const fieldKey = `field${i}`
+          if (fieldMapping[fieldKey] === originalFieldName || fieldKey === originalFieldName) {
+            const field = fieldKey as keyof typeof sentence
+            const value = sentence[field]
+            row.push(value ? String(value).replace(/"/g, '""') : '')
+            found = true
+            break
+          }
+        }
+        if (!found) {
+          row.push('')
         }
       }
 
       // Add support values
-      const supportMapping = (sentence.supportMapping as Record<string, string>) || {}
-      for (let i = 1; i <= 5; i++) {
-        const support = `support${i}` as keyof typeof sentence
-        const columnName = supportMapping[`support${i}`]
-        if (columnName && supportColumns.includes(columnName)) {
-          const value = sentence[support]
-          row.push(value ? String(value).replace(/"/g, '""') : '')
+      for (const columnName of supportColumnOrder) {
+        let found = false
+        for (let i = 1; i <= 5; i++) {
+          const supportKey = `support${i}`
+          if (supportMapping[supportKey] === columnName || supportKey === columnName) {
+            const support = supportKey as keyof typeof sentence
+            const value = sentence[support]
+            row.push(value ? String(value).replace(/"/g, '""') : '')
+            found = true
+            break
+          }
+        }
+        if (!found) {
+          row.push('')
         }
       }
 
-      // Add annotations (grouped by taxonomy and level)
+      // Add annotations (grouped by taxonomy and level) - format: {taxonomyKey}_{level}
+      // Only include user annotations (actual labels)
       for (const [taxonomyKey, maxDepth] of Object.entries(taxonomies)) {
         for (let level = 1; level <= maxDepth; level++) {
           const annotation = sentence.annotations.find(
-            a => a.taxonomy.key === taxonomyKey && a.level === level
+            a => a.taxonomy.key === taxonomyKey && a.level === level && a.source === 'user'
           )
           
           if (annotation) {
@@ -187,7 +248,24 @@ export async function GET(req: NextRequest) {
             const code = isUnknownNodeCode(annotation.nodeCode) ? 'UNKNOWN' : String(annotation.nodeCode)
             row.push(code)
           } else {
-            row.push('') // No annotation for this level
+            row.push('') // No user annotation for this level
+          }
+        }
+      }
+
+      // Add AI suggestions - format: {taxonomyKey}_ai{level} and {taxonomyKey}_ai{level}c
+      for (const [taxonomyKey, maxDepth] of Object.entries(taxonomies)) {
+        for (let level = 1; level <= maxDepth; level++) {
+          const aiSuggestion = sentence.aiSuggestions.find(
+            s => s.taxonomy.key === taxonomyKey && s.level === level
+          )
+          
+          if (aiSuggestion) {
+            const code = isUnknownNodeCode(aiSuggestion.nodeCode) ? 'UNKNOWN' : String(aiSuggestion.nodeCode)
+            const confidence = aiSuggestion.confidenceScore.toFixed(4)
+            row.push(code, confidence)
+          } else {
+            row.push('', '') // No AI suggestion for this level
           }
         }
       }
