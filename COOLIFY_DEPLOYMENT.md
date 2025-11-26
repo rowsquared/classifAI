@@ -263,18 +263,19 @@ To scale the application:
 - **Reason**: Minor ESLint warnings are acceptable and don't affect functionality
 - **Note**: You can still run `pnpm lint` separately to review warnings
 
-**Issue**: `pnpm install` fails
-- **Solution**: The Dockerfile uses `pnpm install` without frozen lockfile
-- **Cause**: Lockfile sync issues in containerized builds
-- **Fix**: The Dockerfile is configured to handle this automatically
+**Issue**: `npm install` or `pnpm install` fails
+- **Solution**: The Dockerfile now uses `npm ci --legacy-peer-deps` with fallback to `npm install`
+- **Cause**: Dependency conflicts or lockfile issues in containerized builds
+- **Fix**: The Dockerfile copies prisma schema before install and uses npm for better compatibility
 
 **Issue**: Prisma client generation fails
 - **Solution**: Ensure all Prisma schema files are properly copied
 - The build process generates Prisma client before building Next.js
 
-**Issue**: pnpm not found
-- **Solution**: The Dockerfile installs pnpm globally using npm
-- No reliance on corepack which can be unreliable in some environments
+**Issue**: Prisma schema not found during install
+- **Solution**: The Dockerfile now copies the prisma directory before running npm install
+- **Reason**: The postinstall script needs the schema to generate the Prisma client
+- **Note**: This is why we copy `prisma` folder early in the build process
 
 ### Runtime Issues
 

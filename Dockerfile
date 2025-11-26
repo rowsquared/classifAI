@@ -6,25 +6,20 @@ RUN apk add --no-cache libc6-compat openssl
 
 WORKDIR /app
 
-# Install pnpm
-RUN npm install -g pnpm@9.1.0
+# Copy package files AND prisma schema (needed for postinstall)
+COPY package.json package-lock.json* pnpm-lock.yaml* ./
+COPY prisma ./prisma
 
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
+# Install dependencies using npm (more reliable in Docker)
+RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
-# Install dependencies
-RUN pnpm install
-
-# Copy application code
+# Copy rest of application code
 COPY . .
 
-# Generate Prisma Client
-RUN npx prisma generate
-
-# Build the application
+# Build the application (prisma generate already ran in postinstall)
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
-RUN pnpm build
+RUN npm run build
 
 # Production stage
 FROM node:20-alpine AS runner
