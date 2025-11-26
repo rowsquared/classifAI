@@ -30,8 +30,8 @@ services:
     ports:
       - "3000:3000"
     labels:
-      - "coolify.managed=true"
-      - "coolify.type=application"
+      - "traefik.enable=true"
+      - "traefik.http.services.classifai-app.loadbalancer.server.port=3000"
     depends_on:
       postgres:
         condition: service_healthy
