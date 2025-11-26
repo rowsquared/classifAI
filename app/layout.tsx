@@ -11,7 +11,7 @@ const inter = Inter({
 })
 
 export const metadata = {
-  title: 'HitLann - Labeling Tool',
+  title: 'classifai - Labeling Tool',
   description: 'Modern annotation tool for hierarchical taxonomies',
   icons: {
     icon: '/favicon.svg',

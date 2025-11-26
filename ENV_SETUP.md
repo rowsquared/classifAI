@@ -6,14 +6,16 @@ Create a `.env` file in the project root with the following variables:
 
 ```env
 # Database
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/hitlann?schema=public"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/classifai?schema=public"
 
 # NextAuth
+AUTH_URL="http://localhost:3000" # Auth.js v5 canonical URL
+AUTH_TRUST_HOST=true             # Allow localhost/preview hosts
 NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="your-secret-key-change-this-in-production"
 
 # Default Admin User (created on first run if not exists)
-DEFAULT_ADMIN_EMAIL="admin@hitlann.local"
+DEFAULT_ADMIN_EMAIL="admin@classifai.local"
 DEFAULT_ADMIN_PASSWORD="change-this-password-immediately"
 DEFAULT_ADMIN_NAME="System Administrator"
 
@@ -45,5 +47,4 @@ For production deployment:
 1. Set strong passwords for both DATABASE and DEFAULT_ADMIN
 2. Use environment variables or secrets management (not `.env` file)
 3. Generate a new NEXTAUTH_SECRET
-4. Set NEXTAUTH_URL to your production domain
-
+4. Set AUTH_URL/NEXTAUTH_URL to your production domain and remove/disable AUTH_TRUST_HOST

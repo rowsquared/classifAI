@@ -40,7 +40,7 @@ Users can now login with either their **username** or **email address** (both wo
 Add to your `.env` file:
 ```env
 DEFAULT_ADMIN_USERNAME="admin"  # New variable
-DEFAULT_ADMIN_EMAIL="admin@hitlann.local"
+DEFAULT_ADMIN_EMAIL="admin@classifai.local"
 DEFAULT_ADMIN_PASSWORD="your-password-here"
 DEFAULT_ADMIN_NAME="Admin"
 ```
@@ -51,7 +51,7 @@ The existing admin user now has username set to `admin` (extracted from their em
 ## Testing
 You can now login with:
 - **Username**: `admin` + password
-- **Email**: `admin@hitlann.local` + password
+- **Email**: `admin@classifai.local` + password
 
 Both will work!
 

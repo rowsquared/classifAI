@@ -1,4 +1,4 @@
-# Hitlann - AI-Assisted Labeling Tool
+# classifai - AI-Assisted Labeling Tool
 
 A modern, responsive web application for hierarchical data labeling with optional AI pre-classification support.
 
@@ -34,8 +34,8 @@ A modern, responsive web application for hierarchical data labeling with optiona
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/hitlann.git
-cd hitlann
+git clone https://github.com/yourusername/classifai.git
+cd classifai
 ```
 
 2. Install dependencies:
@@ -52,7 +52,7 @@ Edit `.env` with your database credentials and secrets. See [ENV_SETUP.md](./ENV
 
 **Required variables:**
 ```env
-DATABASE_URL="postgresql://user:password@localhost:5432/hitlann"
+DATABASE_URL="postgresql://user:password@localhost:5432/classifai"
 NEXTAUTH_SECRET="your-secret-here"  # Generate with: openssl rand -base64 32
 NEXTAUTH_URL="http://localhost:3000"
 DEFAULT_ADMIN_EMAIL="admin@example.com"
@@ -176,7 +176,7 @@ CMD ["pnpm", "start"]
 ## Project Structure
 
 ```
-hitlann/
+classifai/
 ├── app/                    # Next.js app router pages
 │   ├── api/               # API routes
 │   ├── admin/             # Admin pages (taxonomy, sentences, export, team)

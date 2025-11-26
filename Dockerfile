@@ -7,11 +7,18 @@ RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 
 # Copy package files AND prisma schema (needed for postinstall)
-COPY package.json package-lock.json* pnpm-lock.yaml* ./
+COPY package.json .npmrc ./
 COPY prisma ./prisma
 
-# Install dependencies using npm (more reliable in Docker)
-RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+# CRITICAL: Force exact Prisma 6.17.1 installation
+# Remove any existing node_modules and package-lock to start fresh
+RUN rm -rf node_modules package-lock.json
+
+# Install ONLY Prisma packages first with exact versions
+RUN npm install --save-exact --no-save prisma@6.17.1 @prisma/client@6.17.1 --legacy-peer-deps
+
+# Now install all other dependencies (Prisma won't be upgraded)
+RUN npm install --legacy-peer-deps
 
 # Copy rest of application code
 COPY . .
@@ -40,7 +47,7 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
 
 # Set correct permissions

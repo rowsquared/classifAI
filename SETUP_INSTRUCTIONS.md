@@ -7,7 +7,7 @@ The application won't run without a properly configured `.env` file.
 ### 1. Create `.env` file in project root:
 
 ```bash
-cd /Users/andreas/projects/hitlann
+cd /Users/andreas/projects/classifai
 touch .env
 ```
 
@@ -15,14 +15,14 @@ touch .env
 
 ```env
 # Database
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/hitlann?schema=public"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/classifai?schema=public"
 
 # NextAuth (REQUIRED!)
 NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="your-secret-here-replace-me"
 
 # Default Admin User
-DEFAULT_ADMIN_EMAIL="admin@hitlann.local"
+DEFAULT_ADMIN_EMAIL="admin@classifai.local"
 DEFAULT_ADMIN_PASSWORD="ChangeMe123!"
 DEFAULT_ADMIN_NAME="System Administrator"
 ```

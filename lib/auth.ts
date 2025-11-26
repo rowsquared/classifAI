@@ -4,6 +4,8 @@ import { prisma } from './prisma'
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  // Allow localhost/preview hosts when explicitly trusted via env or in non-prod
+  trustHost: process.env.AUTH_TRUST_HOST === 'true' || process.env.NODE_ENV !== 'production',
   callbacks: {
     ...authConfig.callbacks,
     async jwt({ token, user, trigger }) {
@@ -40,4 +42,3 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }
   }
 })
-

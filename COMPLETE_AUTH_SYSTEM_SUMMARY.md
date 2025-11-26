@@ -6,7 +6,7 @@
 
 ## **Overview**
 
-A comprehensive, production-ready authentication and user management system has been fully implemented for the HitLann labeling tool. This includes login/logout, role-based access control, user management, sentence assignments, and visibility filtering.
+A comprehensive, production-ready authentication and user management system has been fully implemented for the classifai labeling tool. This includes login/logout, role-based access control, user management, sentence assignments, and visibility filtering.
 
 ---
 
@@ -172,7 +172,7 @@ else if (user.role === 'admin') {
 ### **1. Environment Setup**:
 Create `.env` file:
 ```env
-DATABASE_URL="postgresql://user:pass@localhost:5432/hitlann"
+DATABASE_URL="postgresql://user:pass@localhost:5432/classifai"
 NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="<generate with: openssl rand -base64 32>"
 DEFAULT_ADMIN_EMAIL="admin@yourdomain.com"

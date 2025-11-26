@@ -1,6 +1,6 @@
 # Coolify Deployment Guide
 
-This guide will help you deploy the HitLANN application on Coolify.
+This guide will help you deploy the classifai application on Coolify.
 
 ## Prerequisites
 
@@ -26,7 +26,7 @@ This method deploys both the application and PostgreSQL database together using 
 2. Select your Git provider and repository
 3. Configure deployment settings:
    - **Build Pack**: Select `docker-compose`
-   - **Docker Compose Location**: `./docker-compose.yaml` (or `./docker-compose.yml`)
+   - **Docker Compose Location**: `./docker-compose.yml`
    - **Port**: `3000`
 
 ### 2. Configure Environment Variables
@@ -37,9 +37,9 @@ Add the following environment variables in Coolify:
 
 ```env
 # PostgreSQL Configuration (will be used by the embedded database)
-POSTGRES_USER=hitlann
+POSTGRES_USER=classifai
 POSTGRES_PASSWORD=generate-a-secure-password-here
-POSTGRES_DB=hitlann
+POSTGRES_DB=classifai
 
 # NextAuth Configuration
 NEXTAUTH_URL=https://your-domain.com
@@ -121,11 +121,11 @@ In your Coolify dashboard:
 1. Navigate to **Databases** → **Add New Database**
 2. Select **PostgreSQL**
 3. Configure:
-   - **Name**: `hitlann-db`
+   - **Name**: `classifai-db`
    - **PostgreSQL Version**: `16` (or latest)
-   - **Username**: `hitlann`
+   - **Username**: `classifai`
    - **Password**: Generate a secure password
-   - **Database Name**: `hitlann`
+   - **Database Name**: `classifai`
 4. Click **Create**
 5. Note the internal connection string
 
@@ -142,7 +142,7 @@ In your Coolify dashboard:
 
 ```env
 # Database (use the connection string from the separate database)
-DATABASE_URL=postgresql://hitlann:your-password@hitlann-db:5432/hitlann?schema=public
+DATABASE_URL=postgresql://classifai:your-password@classifai-db:5432/classifai?schema=public
 
 # NextAuth Configuration
 NEXTAUTH_URL=https://your-domain.com
@@ -227,10 +227,10 @@ You can create manual backups by running:
 
 ```bash
 # Backup
-docker exec hitlann-postgres pg_dump -U hitlann hitlann > backup.sql
+docker exec classifai-postgres pg_dump -U classifai classifai > backup.sql
 
 # Restore
-cat backup.sql | docker exec -i hitlann-postgres psql -U hitlann hitlann
+cat backup.sql | docker exec -i classifai-postgres psql -U classifai classifai
 ```
 
 For automated backups, consider:
@@ -297,6 +297,23 @@ To scale the application:
 **Issue**: Migration fails with permissions error
 - **Solution**: Verify database user has CREATE/ALTER permissions
 
+### Port Allocation Issues
+
+**Issue**: `Bind for 0.0.0.0:5432 failed: port is already allocated`
+- **Cause**: PostgreSQL port mapping conflicts in Coolify
+- **Solution**: Port mappings should be commented out in docker-compose for Coolify
+- **Fix**: Lines 16-17 should be commented (as configured by default)
+
+**Issue**: `Bind for 0.0.0.0:3000 failed: port is already allocated`
+- **Cause**: App port mapping conflicts - Coolify manages ports externally
+- **Solution**: Port mappings should be commented out in docker-compose for Coolify
+- **Fix**: Lines 34-35 should be commented (as configured by default)
+- **Note**: For local testing, these ports MUST be uncommented
+
+**Issue**: Can't access app at localhost:3000 locally
+- **Cause**: Port mapping commented out (Coolify configuration)
+- **Solution**: Uncomment lines 34-35 in docker-compose.yml for local testing
+
 ## Environment-Specific Notes
 
 ### Production Recommendations
@@ -319,7 +336,7 @@ The application uses PostgreSQL for all persistent data. Ensure:
 ## Support
 
 For issues specific to:
-- **HitLANN application**: Check the main README.md
+- **classifai application**: Check the main README.md
 - **Coolify deployment**: Visit [Coolify Documentation](https://coolify.io/docs)
 - **Prisma migrations**: Visit [Prisma Documentation](https://www.prisma.io/docs)
 
@@ -327,6 +344,15 @@ For issues specific to:
 
 Before deploying to Coolify, test locally:
 
+### Important: Port Mapping Configuration
+
+The docker-compose files are configured for Coolify deployment by default (ports commented out). For local testing, you MUST uncomment the port mappings:
+
+1. **Edit docker-compose.yml**:
+   - Uncomment lines 34-35 for app port mapping (3000:3000) - **REQUIRED for local access**
+   - Optionally uncomment lines 16-17 for PostgreSQL if you need direct database access
+
+2. **Run locally**:
 ```bash
 # Copy environment file
 cp .env.example .env
@@ -334,11 +360,21 @@ cp .env.example .env
 # Edit .env with your values
 nano .env
 
-# Build and run
-docker-compose up --build
+# Clean Docker cache completely (important for Prisma version)
+docker-compose down -v
+docker builder prune -af
+docker system prune -af
+
+# Build and run (with --no-cache to ensure fresh build)
+docker-compose build --no-cache
+docker-compose up
 
 # Access at http://localhost:3000
 ```
+
+3. **Before deploying to Coolify**, remember to:
+   - Comment out the port mappings again (or use git to restore the original file)
+   - Commit and push your changes
 
 ## Updating the Application
 
