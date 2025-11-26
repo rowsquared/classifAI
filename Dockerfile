@@ -20,8 +20,17 @@ RUN npm install --save-exact --no-save prisma@6.17.1 @prisma/client@6.17.1 --leg
 # Now install all other dependencies (Prisma won't be upgraded)
 RUN npm install --legacy-peer-deps
 
-# Copy rest of application code
-COPY . .
+# Copy only necessary files for build (improves cache hit rate)
+COPY next.config.ts ./
+COPY tsconfig.json ./
+COPY tailwind.config.js postcss.config.js* ./
+COPY app ./app
+COPY components ./components
+COPY lib ./lib
+COPY styles ./styles
+COPY public ./public
+COPY types ./types
+COPY middleware.ts ./
 
 # Build the application (prisma generate already ran in postinstall)
 ENV NEXT_TELEMETRY_DISABLED=1
