@@ -30,10 +30,10 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    # Port mapping for local development
-    # Comment out the next 2 lines when deploying to Coolify
-    ports:
-      - "3000:3000"
+    # Port mapping removed for Coolify compatibility - Coolify manages ports externally
+    # Uncomment the next 2 lines for local development if you need direct access
+    # ports:
+    #   - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
