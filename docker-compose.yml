@@ -1,5 +1,9 @@
 version: '3.8'
 
+networks:
+  default:
+    name: classifai-network
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -25,13 +29,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: classifai-app
     restart: unless-stopped
-    expose:
+    ports:
       - "3000"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.services.classifai-app.loadbalancer.server.port=3000"
     depends_on:
       postgres:
         condition: service_healthy
