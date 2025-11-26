@@ -26,7 +26,7 @@ This method deploys both the application and PostgreSQL database together using 
 2. Select your Git provider and repository
 3. Configure deployment settings:
    - **Build Pack**: Select `docker-compose`
-   - **Docker Compose Location**: `./docker-compose.yml`
+   - **Docker Compose Location**: `./docker-compose.yaml` (or `./docker-compose.yml`)
    - **Port**: `3000`
 
 ### 2. Configure Environment Variables
