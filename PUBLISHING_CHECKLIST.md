@@ -19,6 +19,7 @@
   - Docker example
   - Security checklist
   - Environment variable setup
+- ✅ Created `COOLIFY_DEPLOYMENT.md` with Coolify-specific deployment guide
 - ✅ All documentation files are up to date
 
 ### 4. Production Configuration
@@ -26,8 +27,11 @@
   - Security headers (X-Frame-Options, X-Content-Type-Options, etc.)
   - SWC minification enabled
   - Production optimizations
+  - Standalone output for Docker deployments
 - ✅ Database migrations are up to date
 - ✅ Prisma client generation configured
+- ✅ Created production-ready `Dockerfile` (multi-stage build)
+- ✅ Created `docker-compose.yaml` with embedded PostgreSQL
 
 ### 5. Build Verification
 - ✅ Production build (`pnpm build`) completes successfully
@@ -94,6 +98,7 @@ Before deploying to production, ensure:
    ```
 
 4. **Or deploy to your platform:**
+   - **Coolify**: See `COOLIFY_DEPLOYMENT.md` for detailed instructions (includes embedded PostgreSQL)
    - **Vercel**: Connect repository, set environment variables, deploy
    - **Docker**: Build and run the Docker container
    - **Other platforms**: Follow their Next.js deployment guides
@@ -112,7 +117,7 @@ These are not required for publishing but could be added later:
 
 - [ ] Add rate limiting middleware
 - [ ] Add request logging
-- [ ] Add health check endpoint
+- ✅ Add health check endpoint (`/api/health`)
 - [ ] Add API documentation
 - [ ] Add unit/integration tests
 - [ ] Add E2E tests

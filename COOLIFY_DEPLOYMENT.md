@@ -258,11 +258,18 @@ To scale the application:
 
 ### Build Fails
 
+**Issue**: `pnpm install --frozen-lockfile` fails
+- **Solution**: The Dockerfile now has a fallback to install without frozen lockfile
+- **Cause**: Usually happens when build cache is stale or pnpm-lock.yaml is out of sync
+- **Fix**: The updated Dockerfile handles this automatically with retry logic
+
 **Issue**: Prisma client generation fails
 - **Solution**: Ensure `DATABASE_URL` is set during build time
+- The build process generates Prisma client before building Next.js
 
 **Issue**: pnpm not found
-- **Solution**: Switch to Dockerfile deployment method
+- **Solution**: The Dockerfile now installs pnpm globally using npm
+- No need to rely on corepack which can be unreliable in some environments
 
 ### Runtime Issues
 
