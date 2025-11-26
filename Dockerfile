@@ -31,6 +31,7 @@ COPY lib ./lib
 COPY styles ./styles
 COPY public ./public
 COPY types ./types
+COPY scripts ./scripts
 COPY middleware.ts ./
 
 # Build the application (prisma generate already ran in postinstall)

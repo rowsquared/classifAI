@@ -67,8 +67,5 @@ Thumbs.db
 # .dockerignore
 # docker-compose.yml
 
-# Scripts (excluded since we copy them explicitly in Dockerfile)
-scripts/
-
 # Claude
 .claude/
