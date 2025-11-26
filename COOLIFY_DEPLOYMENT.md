@@ -24,20 +24,22 @@ This method deploys both the application and PostgreSQL database together using 
 
 1. Navigate to **Projects** → **Add New Resource** → **Application**
 2. Select your Git provider and repository
-3. Configure build settings:
-   - **Build Pack**: `nixpacks` or `dockerfile`
-   - **Dockerfile Location**: `./Dockerfile` (if using Dockerfile)
+3. Configure deployment settings:
+   - **Build Pack**: Select `docker-compose`
+   - **Docker Compose Location**: `./docker-compose.yml`
    - **Port**: `3000`
 
-### 3. Configure Environment Variables
+### 2. Configure Environment Variables
 
 Add the following environment variables in Coolify:
 
 #### Required Variables
 
 ```env
-# Database (use the internal connection string from step 1)
-DATABASE_URL=postgresql://hitlann:your-password@hitlann-db:5432/hitlann?schema=public
+# PostgreSQL Configuration (will be used by the embedded database)
+POSTGRES_USER=hitlann
+POSTGRES_PASSWORD=generate-a-secure-password-here
+POSTGRES_DB=hitlann
 
 # NextAuth Configuration
 NEXTAUTH_URL=https://your-domain.com
@@ -62,7 +64,7 @@ AI_JOB_POLL_INTERVAL_MS=5000
 AI_JOB_POLL_TIMEOUT_MS=600000
 ```
 
-### 4. Generate NEXTAUTH_SECRET
+### 3. Generate NEXTAUTH_SECRET
 
 Generate a secure secret for NextAuth:
 
@@ -72,34 +74,95 @@ openssl rand -base64 32
 
 Use the output as your `NEXTAUTH_SECRET` value.
 
-### 5. Configure Health Check (Optional)
+### 4. Configure Volumes (Important!)
 
-In Coolify's health check settings:
+Coolify should automatically create the volume for PostgreSQL data persistence, but verify:
 
-- **Health Check Path**: `/api/health`
-- **Health Check Port**: `3000`
-- **Health Check Interval**: `30s`
+1. Check that `postgres_data` volume is created
+2. This ensures your database persists across deployments
 
-### 6. Add Build Command (if using Nixpacks)
+### 5. Deploy
 
-If Coolify is using Nixpacks instead of the Dockerfile, add these commands:
+1. Click **Deploy** to start the deployment
+2. Monitor the build logs
+3. Coolify will:
+   - Build the application Docker image
+   - Start PostgreSQL container
+   - Start the application container
+   - Run database migrations automatically
+4. Access your application at your configured domain
 
-**Install Command**:
+### 6. Verify Deployment
+
+Check the health endpoint:
 ```bash
-pnpm install --frozen-lockfile
+curl https://your-domain.com/api/health
 ```
 
-**Build Command**:
-```bash
-pnpm build
+Expected response:
+```json
+{
+  "status": "healthy",
+  "timestamp": "2025-11-25T...",
+  "database": "connected"
+}
 ```
 
-**Start Command**:
-```bash
-sh -c "npx prisma migrate deploy && pnpm start"
+---
+
+## Method 2: Dockerfile Deployment (Separate Database)
+
+Use this method if you want to manage PostgreSQL separately or use Coolify's managed database.
+
+### 1. Create PostgreSQL Database
+
+In your Coolify dashboard:
+
+1. Navigate to **Databases** → **Add New Database**
+2. Select **PostgreSQL**
+3. Configure:
+   - **Name**: `hitlann-db`
+   - **PostgreSQL Version**: `16` (or latest)
+   - **Username**: `hitlann`
+   - **Password**: Generate a secure password
+   - **Database Name**: `hitlann`
+4. Click **Create**
+5. Note the internal connection string
+
+### 2. Create the Application
+
+1. Navigate to **Projects** → **Add New Resource** → **Application**
+2. Select your Git provider and repository
+3. Configure build settings:
+   - **Build Pack**: `dockerfile`
+   - **Dockerfile Location**: `./Dockerfile`
+   - **Port**: `3000`
+
+### 3. Configure Environment Variables
+
+```env
+# Database (use the connection string from the separate database)
+DATABASE_URL=postgresql://hitlann:your-password@hitlann-db:5432/hitlann?schema=public
+
+# NextAuth Configuration
+NEXTAUTH_URL=https://your-domain.com
+NEXTAUTH_SECRET=your-generated-secret-here
+
+# Default Admin User
+DEFAULT_ADMIN_EMAIL=admin@example.com
+DEFAULT_ADMIN_PASSWORD=ChangeMe123!
+DEFAULT_ADMIN_NAME=Admin User
 ```
 
-### 7. Deploy
+### 4. Add Start Command
+
+In Coolify, set the start command to run migrations:
+
+```bash
+sh -c "npx prisma migrate deploy && node server.js"
+```
+
+### 5. Deploy
 
 1. Click **Deploy** to start the deployment
 2. Monitor the build logs
@@ -138,22 +201,47 @@ Expected response:
 }
 ```
 
-## Coolify-Specific Configuration
+---
 
-### Using Docker Compose in Coolify
+## Important Notes
 
-Coolify also supports docker-compose deployments. If you prefer this method:
+### Database Persistence
 
-1. Select **Docker Compose** as deployment type
-2. Point to the `docker-compose.yml` file in your repository
-3. Configure environment variables as above
-4. Deploy
+When using **Method 1 (Docker Compose)**:
+- PostgreSQL data is stored in a Docker volume (`postgres_data`)
+- This volume persists across container restarts and redeployments
+- **Important**: Always configure backups for production use
+
+### Networking
+
+The docker-compose setup creates an internal network where:
+- The app container connects to PostgreSQL using hostname `postgres`
+- PostgreSQL is only accessible within the Docker network (secure by default)
+- Only port 3000 is exposed externally for the application
 
 ### Database Backups
 
-Enable automatic backups in Coolify:
+#### For Docker Compose Deployment:
 
-1. Go to your PostgreSQL database settings
+You can create manual backups by running:
+
+```bash
+# Backup
+docker exec hitlann-postgres pg_dump -U hitlann hitlann > backup.sql
+
+# Restore
+cat backup.sql | docker exec -i hitlann-postgres psql -U hitlann hitlann
+```
+
+For automated backups, consider:
+- Setting up a cron job to backup the Docker volume
+- Using Coolify's backup commands if available
+- Implementing external backup solutions
+
+#### For Separate Database Deployment:
+
+Coolify provides built-in backup functionality:
+1. Go to your PostgreSQL database settings in Coolify
 2. Navigate to **Backups**
 3. Configure backup schedule and retention
 4. Enable backups
