@@ -23,7 +23,8 @@ RUN npm install --legacy-peer-deps
 # Copy only necessary files for build (improves cache hit rate)
 COPY next.config.ts ./
 COPY tsconfig.json ./
-COPY tailwind.config.js postcss.config.js* ./
+COPY postcss.config.js ./
+COPY eslint.config.mjs ./
 COPY app ./app
 COPY components ./components
 COPY lib ./lib
