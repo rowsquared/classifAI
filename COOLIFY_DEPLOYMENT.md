@@ -110,6 +110,22 @@ Expected response:
 
 ---
 
+## Troubleshooting
+
+### `database "<name>" does not exist`
+- This happens when `DATABASE_URL` points to a DB name that wasn't created. If you changed `POSTGRES_DB`/`DATABASE_URL` after the first deploy, the existing Postgres volume will not auto-create the new DB.
+- Fix options:
+  1. **Fresh volume** (wipes data): in Coolify redeploy with the `Remove volumes` option (or delete the `postgres_data` volume) so Postgres reinitializes with the current `POSTGRES_DB`.
+  2. **Keep data**: connect to the Postgres container and create the DB manually, e.g. `psql -U $POSTGRES_USER -c "CREATE DATABASE <db> OWNER $POSTGRES_USER;"`.
+- Ensure `DATABASE_URL` in the app matches the DB name you create.
+
+### AI labeling API returns `Not Found`
+- The base URL is set via `AI_LABELING_API_URL`. It must point at the service root that serves the expected endpoints (e.g., `/learn`, `/learn/{jobId}/status`, `/label`).
+- If the provider uses a prefix (e.g., `/api`), include it in `AI_LABELING_API_URL` (e.g., `https://taxomind-api.rowsquared.org/api`).
+- Verify with `curl -i "$AI_LABELING_API_URL/learn"`; a 200/401/403 indicates you hit the right service, a 404 means the base path is wrong.
+
+---
+
 ## Method 2: Dockerfile Deployment (Separate Database)
 
 Use this method if you want to manage PostgreSQL separately or use Coolify's managed database.

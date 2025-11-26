@@ -53,8 +53,9 @@ services:
       AI_LEARNING_MIN_NEW_ANNOTATIONS: ${AI_LEARNING_MIN_NEW_ANNOTATIONS:-500}
       AI_JOB_POLL_INTERVAL_MS: ${AI_JOB_POLL_INTERVAL_MS:-5000}
       AI_JOB_POLL_TIMEOUT_MS: ${AI_JOB_POLL_TIMEOUT_MS:-600000}
-    ports:
-      - "3000:3000"
+    # Expose internal port; bind host port via an override file for local dev to avoid Coolify conflicts
+    expose:
+      - "3000"
     command: sh -c "npx prisma migrate deploy && node server.js"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
