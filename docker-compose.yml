@@ -11,8 +11,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-hitlann}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Port mapping removed for Coolify compatibility - PostgreSQL is only accessible internally
+    # Uncomment the next 2 lines for local development if you need direct database access
+    # ports:
+    #   - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hitlann}"]
       interval: 10s
