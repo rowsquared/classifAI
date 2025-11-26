@@ -49,6 +49,7 @@ NEXTAUTH_SECRET=your-generated-secret-here
 DEFAULT_ADMIN_EMAIL=admin@example.com
 DEFAULT_ADMIN_PASSWORD=ChangeMe123!
 DEFAULT_ADMIN_NAME=Admin User
+DEFAULT_ADMIN_USERNAME=admin  # Optional: defaults to username extracted from email if not set
 ```
 
 #### Optional AI Labeling Variables
@@ -90,6 +91,7 @@ Coolify should automatically create the volume for PostgreSQL data persistence, 
    - Start PostgreSQL container
    - Start the application container
    - Run database migrations automatically
+   - **Automatically create the default admin user** (if it doesn't exist)
 4. Access your application at your configured domain
 
 ### 6. Verify Deployment
@@ -107,6 +109,21 @@ Expected response:
   "database": "connected"
 }
 ```
+
+### 7. Admin User Auto-Creation
+
+The default admin user is **automatically created** on first deployment using the environment variables you set:
+
+- **Email**: Value from `DEFAULT_ADMIN_EMAIL`
+- **Username**: Value from `DEFAULT_ADMIN_USERNAME` (or extracted from email if not set)
+- **Password**: Value from `DEFAULT_ADMIN_PASSWORD`
+- **Name**: Value from `DEFAULT_ADMIN_NAME`
+
+**Important Notes:**
+- The admin user is only created if it doesn't already exist
+- You can login with either the **username** or **email** address
+- You **must change the password** on first login (forced password reset)
+- If you need to reset the admin password, update `DEFAULT_ADMIN_PASSWORD` and restart the container
 
 ---
 
@@ -168,15 +185,18 @@ NEXTAUTH_SECRET=your-generated-secret-here
 DEFAULT_ADMIN_EMAIL=admin@example.com
 DEFAULT_ADMIN_PASSWORD=ChangeMe123!
 DEFAULT_ADMIN_NAME=Admin User
+DEFAULT_ADMIN_USERNAME=admin  # Optional: defaults to username extracted from email if not set
 ```
 
 ### 4. Add Start Command
 
-In Coolify, set the start command to run migrations:
+In Coolify, set the start command to run migrations and initialize admin:
 
 ```bash
-sh -c "npx prisma migrate deploy && node server.js"
+sh -c "npx prisma migrate deploy && node scripts/init-admin.js && node server.js"
 ```
+
+**Note**: The `init-admin.js` script automatically creates the default admin user if it doesn't exist, using the environment variables you configured.
 
 ### 5. Deploy
 
@@ -190,8 +210,12 @@ sh -c "npx prisma migrate deploy && node server.js"
 ### First Login
 
 1. Navigate to your application URL
-2. Login with the default admin credentials you set in `DEFAULT_ADMIN_EMAIL` and `DEFAULT_ADMIN_PASSWORD`
-3. **Important**: Change your password immediately after first login
+2. Login with the default admin credentials:
+   - **Username or Email**: Value from `DEFAULT_ADMIN_EMAIL` (or `DEFAULT_ADMIN_USERNAME` if set)
+   - **Password**: Value from `DEFAULT_ADMIN_PASSWORD`
+3. **Important**: You **must** change your password immediately after first login (forced password reset)
+
+**Note**: The admin user is automatically created during deployment. Check the deployment logs to confirm it was created successfully.
 
 ### Database Migrations
 
