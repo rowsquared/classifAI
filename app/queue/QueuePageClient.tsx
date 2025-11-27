@@ -479,7 +479,13 @@ export default function QueuePageClient({
       setSendingToAI(true)
       cancelAIQueueRef.current = false
       const taxonomyKeys = activeTaxonomies.map(t => t.key)
-      setAiQueueStatus({ current: null, remaining: taxonomyKeys })
+      const sessionId = `session-${Date.now()}`
+      const queueStatus = { current: null, remaining: taxonomyKeys, sessionId }
+      setAiQueueStatus(queueStatus)
+      // Share queue status with AIJobStatusBadge via sessionStorage
+      sessionStorage.setItem('aiQueueStatus', JSON.stringify(queueStatus))
+      // Store session ID to track which jobs belong to this session
+      sessionStorage.setItem('currentAISessionId', sessionId)
 
       for (let i = 0; i < activeTaxonomies.length; i++) {
         const taxonomy = activeTaxonomies[i]
@@ -488,10 +494,29 @@ export default function QueuePageClient({
           break
         }
 
-        setAiQueueStatus({
+        // Check if this taxonomy was cancelled from the popup
+        try {
+          const queueStatusStr = sessionStorage.getItem('aiQueueStatus')
+          if (queueStatusStr) {
+            const queueStatus = JSON.parse(queueStatusStr) as { current: string | null; remaining: string[] }
+            if (!queueStatus.remaining.includes(taxonomy.key) && queueStatus.current !== taxonomy.key) {
+              // This taxonomy was cancelled, skip it
+              continue
+            }
+          }
+        } catch (error) {
+          console.error('Failed to check queue status:', error)
+        }
+
+        const currentSessionId = sessionStorage.getItem('currentAISessionId')
+        const queueStatus = {
           current: taxonomy.key,
-          remaining: taxonomyKeys.slice(i + 1)
-        })
+          remaining: taxonomyKeys.slice(i + 1),
+          sessionId: currentSessionId || undefined
+        }
+        setAiQueueStatus(queueStatus)
+        // Update shared queue status
+        sessionStorage.setItem('aiQueueStatus', JSON.stringify(queueStatus))
 
         const res = await fetch('/api/ai-labeling/jobs', {
           method: 'POST',
@@ -512,17 +537,19 @@ export default function QueuePageClient({
         }
 
         setActiveJobIds(prev => new Set(prev).add(jobId))
-        addToast('info', `AI job started for ${taxonomy.key}`, 3000)
+        // Store job ID with session ID for tracking
+        if (currentSessionId) {
+          const sessionJobs = JSON.parse(sessionStorage.getItem('aiSessionJobs') || '[]')
+          sessionJobs.push({ jobId, sessionId: currentSessionId, taxonomyKey: taxonomy.key })
+          sessionStorage.setItem('aiSessionJobs', JSON.stringify(sessionJobs))
+        }
 
         try {
-          const completedJob = await waitForAIJobCompletion(jobId, taxonomy.key)
-          if (completedJob?.status === 'failed') {
-            addToast('error', `AI job failed for ${taxonomy.key}`, 4000)
-          } else {
-            addToast('success', `AI job completed for ${taxonomy.key}`, 4000)
-          }
+          await waitForAIJobCompletion(jobId, taxonomy.key)
+          // No toast messages - user can check button for status
         } catch (jobError) {
           console.error(jobError)
+          // Only show error toasts for actual failures
           addToast('error', jobError instanceof Error ? jobError.message : String(jobError))
         } finally {
           setActiveJobIds(prev => {
@@ -541,6 +568,8 @@ export default function QueuePageClient({
     } finally {
       setSendingToAI(false)
       setAiQueueStatus(null)
+      // DON'T remove aiQueueStatus from sessionStorage here - let the badge component handle cleanup
+      // when all jobs are actually done. Removing it here causes the button to disappear prematurely.
       cancelAIQueueRef.current = false
     }
   }
@@ -581,16 +610,7 @@ export default function QueuePageClient({
               setLastRefresh(Date.now())
               await fetchQueue()
               
-              // Show notification
-              const successCount = completedJobs.filter((j: any) => j.status === 'completed').length
-              if (successCount > 0) {
-                addToast('success', `AI labeling completed for ${successCount} job${successCount !== 1 ? 's' : ''}. Labels updated.`, 5000)
-              }
-              
-              const failedCount = completedJobs.filter((j: any) => j.status === 'failed').length
-              if (failedCount > 0) {
-                addToast('error', `${failedCount} AI labeling job${failedCount !== 1 ? 's' : ''} failed.`, 5000)
-              }
+              // No toast messages - user can check button for status
             }
           }
         }
@@ -794,8 +814,8 @@ export default function QueuePageClient({
                             : 'Send selected sentences to AI for all active taxonomies'
                         }
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L4.5 21v-5.25M19.5 11.25l-7.5 5.25-7.5-5.25 7.5-5.25 7.5 5.25zM19.5 11.25V16.5M12 6v5.25" />
+                        <svg className="w-4 h-4" viewBox="0 0 12 12" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M11.787 6.654l-2.895-1.03-1.081-3.403A.324.324 0 007.5 2c-.143 0-.27.09-.311.221l-1.08 3.404-2.897 1.03A.313.313 0 003 6.946c0 .13.085.248.212.293l2.894 1.03 1.082 3.507A.324.324 0 007.5 12c.144 0 .271-.09.312-.224L8.893 8.27l2.895-1.029A.313.313 0 0012 6.947a.314.314 0 00-.213-.293zM4.448 1.77l-1.05-.39-.39-1.05a.444.444 0 00-.833 0l-.39 1.05-1.05.39a.445.445 0 000 .833l1.05.389.39 1.051a.445.445 0 00.833 0l.39-1.051 1.05-.389a.445.445 0 000-.834z" />
                         </svg>
                         {sendingToAI
                           ? aiQueueStatus?.current
@@ -806,24 +826,6 @@ export default function QueuePageClient({
                       {!sendingToAI && unsyncedTaxonomies.length > 0 && (
                         <span className="text-xs text-red-600 whitespace-nowrap">
                           Sync required: {unsyncedTaxonomies.map(t => t.key).join(', ')}
-                        </span>
-                      )}
-                      {sendingToAI && aiQueueStatus && aiQueueStatus.remaining.length > 0 && (
-                        <button
-                          onClick={handleCancelPendingAIJobs}
-                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-                        >
-                          Cancel remaining
-                        </button>
-                      )}
-                      {sendingToAI && aiQueueStatus && (
-                        <span className="text-xs text-gray-600 whitespace-nowrap">
-                          {aiQueueStatus.current
-                            ? `Currently sending ${aiQueueStatus.current}`
-                            : 'Starting AI job…'}
-                          {aiQueueStatus.remaining.length > 0 && (
-                            <> • {aiQueueStatus.remaining.length} remaining</>
-                          )}
                         </span>
                       )}
                     </div>

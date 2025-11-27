@@ -138,11 +138,13 @@ export async function GET(req: NextRequest) {
       const supportMapping = (sentence.supportMapping as Record<string, string>) || {}
       
       // Field columns (1-5) - use format field_FIELD_NAME
+      // fieldMapping uses numeric keys: { "1": "job_description", "2": "job_title", ... }
       for (let i = 1; i <= 5; i++) {
         const fieldKey = `field${i}`
         const fieldValue = sentence[fieldKey as keyof typeof sentence]
         if (fieldValue) {
-          const originalColumnName = fieldMapping[fieldKey] || fieldKey
+          // fieldMapping keys are "1", "2", etc., not "field1", "field2"
+          const originalColumnName = fieldMapping[String(i)] || fieldKey
           const columnName = `field_${originalColumnName}`
           if (!allFieldColumns.has(columnName)) {
             allFieldColumns.add(columnName)
@@ -151,15 +153,18 @@ export async function GET(req: NextRequest) {
         }
       }
       
-      // Support columns (1-5) - keep original names
+      // Support columns (1-5) - use format support_FIELD_NAME
+      // supportMapping uses numeric keys: { "1": "interviewer", "2": "industry", ... }
       for (let i = 1; i <= 5; i++) {
         const supportKey = `support${i}`
         const supportValue = sentence[supportKey as keyof typeof sentence]
         if (supportValue) {
-          const originalColumnName = supportMapping[supportKey] || supportKey
-          if (!allSupportColumns.has(originalColumnName)) {
-            allSupportColumns.add(originalColumnName)
-            supportColumnOrder.push(originalColumnName)
+          // supportMapping keys are "1", "2", etc., not "support1", "support2"
+          const originalColumnName = supportMapping[String(i)] || supportKey
+          const columnName = `support_${originalColumnName}`
+          if (!allSupportColumns.has(columnName)) {
+            allSupportColumns.add(columnName)
+            supportColumnOrder.push(columnName)
           }
         }
       }
@@ -201,12 +206,13 @@ export async function GET(req: NextRequest) {
         // Extract the original field name from field_FIELD_NAME
         const originalFieldName = columnName.replace(/^field_/, '')
         // Find which field number this corresponds to
+        // fieldMapping uses numeric keys: { "1": "job_description", "2": "job_title", ... }
         let found = false
         for (let i = 1; i <= 5; i++) {
-          const fieldKey = `field${i}`
-          if (fieldMapping[fieldKey] === originalFieldName || fieldKey === originalFieldName) {
-            const field = fieldKey as keyof typeof sentence
-            const value = sentence[field]
+          // Check if this field number maps to the original field name
+          if (fieldMapping[String(i)] === originalFieldName) {
+            const fieldKey = `field${i}` as keyof typeof sentence
+            const value = sentence[fieldKey]
             row.push(value ? String(value).replace(/"/g, '""') : '')
             found = true
             break
@@ -217,14 +223,18 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Add support values
+      // Add support values - use support_FIELD_NAME format
+      // supportMapping uses numeric keys: { "1": "interviewer", "2": "industry", ... }
       for (const columnName of supportColumnOrder) {
+        // Extract the original field name from support_FIELD_NAME
+        const originalFieldName = columnName.replace(/^support_/, '')
+        // Find which support number this corresponds to
         let found = false
         for (let i = 1; i <= 5; i++) {
-          const supportKey = `support${i}`
-          if (supportMapping[supportKey] === columnName || supportKey === columnName) {
-            const support = supportKey as keyof typeof sentence
-            const value = sentence[support]
+          // Check if this support number maps to the original field name
+          if (supportMapping[String(i)] === originalFieldName) {
+            const supportKey = `support${i}` as keyof typeof sentence
+            const value = sentence[supportKey]
             row.push(value ? String(value).replace(/"/g, '""') : '')
             found = true
             break

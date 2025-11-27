@@ -42,3 +42,15 @@ input[type="checkbox"]:focus {
   outline: 2px solid #009090; /* indigo-500 - custom teal */
   outline-offset: 2px;
 }
+
+/* Sidebar initial state - set by blocking script before React hydrates */
+/* This CSS applies immediately, then React's inline styles take over after hydration */
+/* Only apply when NOT hydrated - once hydrated, React's inline styles take over */
+html:not(.sidebar-hydrated)[data-sidebar-collapsed="true"] .sidebar-container {
+  width: 66px !important;
+}
+
+html:not(.sidebar-hydrated)[data-sidebar-collapsed="false"] .sidebar-container,
+html:not(.sidebar-hydrated):not([data-sidebar-collapsed]) .sidebar-container {
+  width: 256px !important;
+}

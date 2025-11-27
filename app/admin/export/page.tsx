@@ -5,7 +5,6 @@ import PageHeader from '@/components/PageHeader'
 export default function ExportAdminPage() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [statusFilter, setStatusFilter] = useState('all')
-  const [dateRange, setDateRange] = useState('all')
   const [exporting, setExporting] = useState(false)
 
   const handleExport = async () => {
@@ -16,9 +15,6 @@ export default function ExportAdminPage() {
       const params = new URLSearchParams()
       if (statusFilter !== 'all') {
         params.append('status', statusFilter)
-      }
-      if (dateRange !== 'all') {
-        params.append('dateRange', dateRange)
       }
       
       const url = `/api/export${params.toString() ? '?' + params.toString() : ''}`
@@ -73,8 +69,8 @@ export default function ExportAdminPage() {
           </div>
           
           <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
+            <div className="flex items-end gap-4">
+              <div className="w-64">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Status Filter
                 </label>
@@ -90,24 +86,6 @@ export default function ExportAdminPage() {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Date Range
-                </label>
-                <select 
-                  value={dateRange}
-                  onChange={(e) => setDateRange(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="all">All Time</option>
-                  <option value="today">Today</option>
-                  <option value="week">Last 7 Days</option>
-                  <option value="month">Last 30 Days</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-4">
               <button
                 onClick={handleExport}
                 disabled={exporting}
