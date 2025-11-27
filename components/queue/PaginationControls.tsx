@@ -112,6 +112,13 @@ export default function PaginationControls({
       {/* Right: Page navigation */}
       <div className="flex items-center gap-2">
         <button
+          onClick={() => onPageChange(1)}
+          disabled={page === 1}
+          className="px-3 py-2 text-sm bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          « First
+        </button>
+        <button
           onClick={() => onPageChange(Math.max(1, page - 1))}
           disabled={page === 1}
           className="px-4 py-2 text-sm bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -127,6 +134,13 @@ export default function PaginationControls({
           className="px-4 py-2 text-sm bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           Next →
+        </button>
+        <button
+          onClick={() => onPageChange(totalPages)}
+          disabled={page === totalPages || totalPages === 0}
+          className="px-3 py-2 text-sm bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          Last »
         </button>
       </div>
     </div>

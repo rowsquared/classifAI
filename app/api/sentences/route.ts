@@ -20,6 +20,7 @@ export async function GET(request: Request) {
     const userId = searchParams.get('userId') || ''
     const userScope = searchParams.get('userScope') || '' // 'me' for current user
     const assignedToUserId = searchParams.get('assignedToUserId') || ''
+    const lastEditorId = searchParams.get('lastEditorId') || ''
     const lastEditedFrom = searchParams.get('lastEditedFrom') || ''
     const lastEditedTo = searchParams.get('lastEditedTo') || ''
     const taxonomyKey = searchParams.get('taxonomyKey') || ''
@@ -133,6 +134,10 @@ export async function GET(request: Request) {
           }
         }
       })
+    }
+
+    if (lastEditorId) {
+      where.AND!.push({ lastEditorId })
     }
     
     // Date range filter
@@ -324,6 +329,7 @@ export async function GET(request: Request) {
           lastEditor: {
             select: {
               name: true,
+              username: true,
               email: true
             }
           },

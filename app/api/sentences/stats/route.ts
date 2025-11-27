@@ -88,7 +88,12 @@ export async function GET(req: NextRequest) {
     // User filter
     const userId = searchParams.get('userId')
     if (userId) {
-      AND.push({ lastEditedBy: userId })
+      AND.push({ lastEditorId: userId })
+    }
+
+    const lastEditorId = searchParams.get('lastEditorId')
+    if (lastEditorId) {
+      AND.push({ lastEditorId })
     }
 
     // Assigned to filter

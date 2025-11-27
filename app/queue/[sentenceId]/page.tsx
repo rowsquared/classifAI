@@ -94,15 +94,18 @@ export default function LabelingPage() {
   const activeTaxonomy = taxonomies[activeTaxonomyIndex] || null
 
   // Helper function to calculate completed taxonomies from annotations
-  // Since the frontend only allows submission when a leaf/unknown is selected,
-  // if annotations exist for a taxonomy, we can assume they are complete
+  // Only treat taxonomies with user-submitted annotations as completed.
+  // AI suggestions (source === 'ai') should not mark a taxonomy as completed,
+  // otherwise the submit button would appear as "submitted" before a human action.
   const calculateCompletedTaxonomies = (annotations: any[], taxonomiesList: Taxonomy[]) => {
     const completed = new Set<string>()
     taxonomiesList.forEach(tax => {
-      const taxAnnotations = annotations.filter((ann: any) => ann.taxonomy.key === tax.key)
-      // If annotations exist, they must be complete (leaf or unknown) because
-      // the frontend submit button only enables in those cases
-      if (taxAnnotations.length > 0) {
+      const userAnnotations = annotations.filter((ann: any) => {
+        const annotationTaxKey = ann.taxonomy?.key
+        const source = ann.source ?? 'user'
+        return annotationTaxKey === tax.key && source !== 'ai'
+      })
+      if (userAnnotations.length > 0) {
         completed.add(tax.key)
       }
     })
@@ -275,11 +278,18 @@ export default function LabelingPage() {
     }
   }
 
-  // Check if we have a leaf or unknown selected
-  const hasLeafOrUnknown = selectedLabels.some(l => l.isLeaf === true || isUnknownNodeCode(l.nodeCode))
+  // Work only with labels that belong to the currently active taxonomy
+  const activeSelectedLabels = activeTaxonomy
+    ? selectedLabels.filter(l => l.taxonomyKey === activeTaxonomy.key)
+    : []
+  
+  // Check if we have a leaf or unknown selected for the active taxonomy
+  const hasLeafOrUnknown = activeSelectedLabels.some(
+    l => l.isLeaf === true || isUnknownNodeCode(l.nodeCode)
+  )
   
   // Also check if we have AI suggestions with a complete path (all levels from 1 to lowest level)
-  const aiLabels = selectedLabels.filter(l => l.source === 'ai' && l.taxonomyKey === activeTaxonomy?.key)
+  const aiLabels = activeSelectedLabels.filter(l => l.source === 'ai')
   const hasCompleteAIPath = aiLabels.length > 0 && activeTaxonomy && (() => {
     const maxLevel = Math.max(...aiLabels.map(l => l.level))
     const allLevels = aiLabels.map(l => l.level)
@@ -288,8 +298,15 @@ export default function LabelingPage() {
     const hasCompletePath = expectedLevels.every(level => allLevels.includes(level))
     // Get the lowest level label
     const lowestLabel = aiLabels.find(l => l.level === maxLevel)
-    // Enable submit if we have a complete path - having all levels means it's a valid classification
-    return hasCompletePath && lowestLabel !== undefined
+    // Only allow AI path to count if the deepest node is a leaf, unknown, or at max depth
+    const lowestIsLeafOrUnknown =
+      lowestLabel !== undefined &&
+      (
+        lowestLabel.isLeaf === true ||
+        isUnknownNodeCode(lowestLabel.nodeCode) ||
+        lowestLabel.level >= (activeTaxonomy.maxDepth || Number.MAX_SAFE_INTEGER)
+      )
+    return hasCompletePath && lowestLabel !== undefined && lowestIsLeafOrUnknown
   })()
   
   const canSubmit = hasLeafOrUnknown || hasCompleteAIPath

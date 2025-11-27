@@ -8,6 +8,7 @@ export type QueueFilters = {
   userId: string | null
   userScope: 'all' | 'me' | 'specific'
   assignedToUserId: string | null
+  lastEditorId: string | null
   dateRange: {
     from: string | null
     to: string | null
@@ -33,6 +34,7 @@ export const countActiveFilters = (filters: QueueFilters): number => {
     (filters.flagged !== null ? 1 : 0) +
     (filters.hasComments !== null ? 1 : 0) +
     (filters.assignedToUserId ? 1 : 0) +
+    (filters.lastEditorId ? 1 : 0) +
     (filters.dateRange.from || filters.dateRange.to ? 1 : 0) +
     (filters.taxonomyKey ? 1 : 0) +
     (filters.code ? 1 : 0) +
@@ -74,7 +76,16 @@ export default function FilterPanel({
   users = [],
   showAssignedToFilter = false
 }: FilterPanelProps) {
-  const [localFilters, setLocalFilters] = useState<QueueFilters>(filters)
+  const [localFilters, setLocalFilters] = useState<QueueFilters>({
+    ...filters,
+    lastEditorId: filters.lastEditorId || null
+  })
+  useEffect(() => {
+    setLocalFilters({
+      ...filters,
+      lastEditorId: filters.lastEditorId || null
+    })
+  }, [filters])
   const unknownOptions = useMemo(() => {
     return Object.entries(UNKNOWN_NODE_CODES).map(([lvl, code]) => {
       const levelNumber = Number(lvl)
@@ -276,6 +287,7 @@ export default function FilterPanel({
       userId: null,
       userScope: 'all',
       assignedToUserId: null,
+      lastEditorId: null,
       dateRange: { from: null, to: null },
       taxonomyKey: null,
       level: null,
@@ -403,7 +415,31 @@ export default function FilterPanel({
               <option value="">All users</option>
               {users.map(user => (
                 <option key={user.id} value={user.id}>
-                  {user.name || user.username}
+                  {user.username}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Last Editor */}
+        {users.length > 0 && (
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 mb-2">Last Editor</h3>
+            <select
+              value={localFilters.lastEditorId || ''}
+              onChange={(e) =>
+                setLocalFilters(prev => ({
+                  ...prev,
+                  lastEditorId: e.target.value || null
+                }))
+              }
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">All editors</option>
+              {users.map(user => (
+                <option key={user.id} value={user.id}>
+                  {user.username}
                 </option>
               ))}
             </select>

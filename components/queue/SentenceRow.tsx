@@ -53,6 +53,7 @@ type Sentence = {
   lastEditedAt: string | null
   lastEditor?: {
     name: string | null
+    username: string | null
     email: string
   } | null
   assignments?: Array<{
@@ -310,12 +311,12 @@ export default function SentenceRow({
 
       {/* Last Editor */}
       <td className="px-4 py-3 whitespace-nowrap">
-        {sentence.lastEditor?.name ? (
+        {sentence.lastEditor?.username ? (
           <span 
-            className={`text-xs px-2 py-0.5 rounded ${getUserColor(sentence.lastEditor.name)}`}
-            title={sentence.lastEditor.name}
+            className={`text-xs px-2 py-0.5 rounded ${getUserColor(sentence.lastEditor.username)}`}
+            title={sentence.lastEditor.username}
           >
-            {sentence.lastEditor.name}
+            {sentence.lastEditor.username}
           </span>
         ) : (
           <span className="text-gray-400 text-sm">—</span>

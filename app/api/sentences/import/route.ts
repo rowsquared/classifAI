@@ -75,9 +75,6 @@ export async function POST(req: NextRequest) {
       errors.push(`Invalid columns found: ${invalidColumns.join(', ')}. Only 'id', 'field_*', and 'support_*' are allowed.`)
     }
 
-    if (fieldColumns.length === 0) {
-      errors.push('CSV must contain at least one field_* column')
-    }
 
     if (fieldColumns.length > MAX_FIELD_COLUMNS) {
       errors.push(`Too many field columns (${fieldColumns.length}). Maximum is ${MAX_FIELD_COLUMNS}`)
@@ -106,6 +103,13 @@ export async function POST(req: NextRequest) {
       const fieldName = col.substring(8) // Remove 'support_' prefix
       supportMapping[String(idx + 1)] = fieldName
     })
+
+    if (fieldColumns.length === 0) {
+      return NextResponse.json({
+        ok: false,
+        errors: ['CSV must contain at least one field_* column']
+      }, { status: 400 })
+    }
 
     // Process records
     const sentences: any[] = []
@@ -136,16 +140,18 @@ export async function POST(req: NextRequest) {
       }
 
       // Extract field values
-      const field1 = fieldColumns[0] ? record[fieldColumns[0]]?.trim() : null
-      if (!field1) {
-        rowErrors.push({ row: rowNum, message: 'First field column is required and cannot be empty' })
-        continue
-      }
-
-      const field2 = fieldColumns[1] ? record[fieldColumns[1]]?.trim() || null : null
-      const field3 = fieldColumns[2] ? record[fieldColumns[2]]?.trim() || null : null
-      const field4 = fieldColumns[3] ? record[fieldColumns[3]]?.trim() || null : null
-      const field5 = fieldColumns[4] ? record[fieldColumns[4]]?.trim() || null : null
+      const field1 = fieldColumns[0]
+        ? (() => {
+            const raw = record[fieldColumns[0]]
+            if (raw === undefined || raw === null) return ''
+            const value = String(raw).trim()
+            return value
+          })()
+        : ''
+      const field2 = fieldColumns[1] ? (record[fieldColumns[1]]?.trim() || null) : null
+      const field3 = fieldColumns[2] ? (record[fieldColumns[2]]?.trim() || null) : null
+      const field4 = fieldColumns[3] ? (record[fieldColumns[3]]?.trim() || null) : null
+      const field5 = fieldColumns[4] ? (record[fieldColumns[4]]?.trim() || null) : null
 
       // Extract support values
       const support1 = supportColumns[0] ? record[supportColumns[0]]?.trim() || null : null
@@ -173,9 +179,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (rowErrors.length > 0) {
+      const formattedErrors = rowErrors.map(err => `Row ${err.row}: ${err.message}`)
       return NextResponse.json({ 
         ok: false, 
-        errors: rowErrors 
+        errors: formattedErrors 
       }, { status: 400 })
     }
 

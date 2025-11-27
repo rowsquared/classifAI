@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
+import { useSession } from 'next-auth/react'
 import PageHeader from '@/components/PageHeader'
 
 export type User = {
@@ -26,6 +27,22 @@ type Props = {
 }
 
 export default function TeamPageClient({ initialUsers }: Props) {
+  const { data: session } = useSession()
+  const formatLastLoginDate = (date: Date | string | null) => {
+    if (!date) return 'Never'
+    try {
+      const parsed = typeof date === 'string' ? new Date(date) : date
+      if (Number.isNaN(parsed.getTime())) return 'Never'
+      return new Intl.DateTimeFormat('en-GB', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        timeZone: 'UTC',
+      }).format(parsed)
+    } catch {
+      return 'Never'
+    }
+  }
   const [users, setUsers] = useState<User[]>(initialUsers)
   const [loading, setLoading] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -259,7 +276,7 @@ export default function TeamPageClient({ initialUsers }: Props) {
                     {user._count.assignedSentences}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-600">
-                    {user.lastLogin ? new Date(user.lastLogin).toLocaleDateString() : 'Never'}
+                    {formatLastLoginDate(user.lastLogin)}
                   </td>
                   <td className="px-4 py-3 text-sm text-right">
                     <button

@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, useLayoutEffect } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
@@ -21,20 +21,45 @@ const HEADER_HEIGHT = LOGO_SIZE * 3 // 3w = 60px
 const FOOTER_LOGO_HEIGHT = 48 // Fixed height for R2 footer logo
 
 export default function Sidebar() {
+  // Always start with false on both server and client to prevent hydration mismatch
+  // We'll update to the correct state in useLayoutEffect before paint
   const [collapsed, setCollapsed] = useState(false)
   const [isHydrated, setIsHydrated] = useState(false)
   const [logoHovered, setLogoHovered] = useState(false)
   const [showLogoutMenu, setShowLogoutMenu] = useState(false)
+  const initializedRef = useRef(false)
   const pathname = usePathname()
   const { data: session } = useSession()
 
-  // Initialize from localStorage synchronously before paint (useLayoutEffect)
+  // Read from data attribute and sync state, then remove CSS override
   useLayoutEffect(() => {
-    const saved = localStorage.getItem('sidebar-collapsed')
-    if (saved !== null) {
-      setCollapsed(JSON.parse(saved))
+    if (initializedRef.current) return
+    initializedRef.current = true
+
+    // Read from data attribute set by blocking script
+    const dataAttr = document.documentElement.getAttribute('data-sidebar-collapsed')
+    let shouldBeCollapsed = false
+    if (dataAttr !== null) {
+      shouldBeCollapsed = dataAttr === 'true'
+    } else {
+      // Fallback to localStorage
+      const saved = localStorage.getItem('sidebar-collapsed')
+      if (saved !== null) {
+        shouldBeCollapsed = JSON.parse(saved)
+      }
     }
-    setIsHydrated(true)
+
+    // Update state to match CSS (which was set by blocking script)
+    setCollapsed(shouldBeCollapsed)
+    
+    // Remove CSS !important override by adding hydration class
+    // This allows React's inline styles to take over
+    document.documentElement.classList.add('sidebar-hydrated')
+    
+    // Enable transitions after CSS override is removed
+    requestAnimationFrame(() => {
+      setIsHydrated(true)
+    })
   }, [])
 
   // Close logout menu when clicking outside
@@ -101,7 +126,7 @@ export default function Sidebar() {
       ),
       label: 'Taxonomy', 
       href: '/admin/taxonomy',
-      roles: ['admin', 'supervisor']
+      roles: ['admin']
     },
     { 
       icon: (
@@ -111,7 +136,7 @@ export default function Sidebar() {
       ),
       label: 'Sentences', 
       href: '/admin/sentences',
-      roles: ['admin', 'supervisor']
+      roles: ['admin']
     },
     { 
       icon: (
@@ -121,7 +146,7 @@ export default function Sidebar() {
       ),
       label: 'Export', 
       href: '/admin/export',
-      roles: ['admin', 'supervisor']
+      roles: ['admin']
     },
     { 
       icon: (
@@ -176,7 +201,8 @@ export default function Sidebar() {
 
   return (
     <aside 
-      className="bg-gray-50 border-r border-gray-200 flex flex-col"
+      className="bg-gray-50 border-r border-gray-200 flex flex-col sidebar-container"
+      suppressHydrationWarning
       style={{ 
         width: collapsed ? `${SIDEBAR_COLLAPSED_WIDTH}px` : '256px',
         transition: isHydrated ? 'width 300ms ease-in-out' : 'none'
@@ -185,6 +211,7 @@ export default function Sidebar() {
       {/* Logo Section - Height: 3w (90px) */}
       <div 
         className="flex items-center border-b border-gray-200 relative"
+        suppressHydrationWarning
         style={{ 
           height: `${HEADER_HEIGHT}px`,
           paddingLeft: `${SPACING}px`,
@@ -223,7 +250,8 @@ export default function Sidebar() {
           {/* Survey Title - Fades in/out when expanded/collapsed */}
           <h1 
             className="text-sm font-semibold text-gray-900 truncate overflow-hidden"
-            style={{ 
+            suppressHydrationWarning
+            style={{
               opacity: collapsed ? 0 : 1,
               width: collapsed ? 0 : 'auto',
               transition: isHydrated ? 'opacity 300ms ease-in-out' : 'none'
@@ -273,6 +301,7 @@ export default function Sidebar() {
               </div>
               <span 
                 className="text-sm font-medium whitespace-nowrap overflow-hidden"
+                suppressHydrationWarning
                 style={{ 
                   opacity: collapsed ? 0 : 1,
                   width: collapsed ? 0 : 'auto',
@@ -309,6 +338,7 @@ export default function Sidebar() {
               </div>
               <div 
                 className="flex-1 min-w-0 overflow-hidden text-left"
+                suppressHydrationWarning
                 style={{ 
                   opacity: collapsed ? 0 : 1,
                   width: collapsed ? 0 : 'auto',

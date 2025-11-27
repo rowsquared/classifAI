@@ -101,6 +101,7 @@ const DEFAULT_FILTERS: QueueFilters = {
   userId: null,
   userScope: 'all',
   assignedToUserId: null,
+  lastEditorId: null,
   dateRange: { from: null, to: null },
   taxonomyKey: null,
   level: null,
@@ -203,6 +204,7 @@ export default function QueuePageClient({
       }
       if (filters.userId) params.set('userId', filters.userId)
       if (filters.assignedToUserId) params.set('assignedToUserId', filters.assignedToUserId)
+      if (filters.lastEditorId) params.set('lastEditorId', filters.lastEditorId)
       if (filters.dateRange.from) params.set('dateFrom', filters.dateRange.from)
       if (filters.dateRange.to) params.set('dateTo', filters.dateRange.to)
       if (filters.taxonomyKey) params.set('taxonomyKey', filters.taxonomyKey)
@@ -265,6 +267,7 @@ export default function QueuePageClient({
       // Other filters
       if (filters.userId) params.set('userId', filters.userId)
       if (filters.assignedToUserId) params.set('assignedToUserId', filters.assignedToUserId)
+      if (filters.lastEditorId) params.set('lastEditorId', filters.lastEditorId)
       if (filters.dateRange.from) params.set('lastEditedFrom', filters.dateRange.from)
       if (filters.dateRange.to) params.set('lastEditedTo', filters.dateRange.to)
       if (filters.taxonomyKey) params.set('taxonomyKey', filters.taxonomyKey)
