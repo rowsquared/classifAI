@@ -671,7 +671,9 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                       <p className="font-medium mb-1">
                         {modalMessage.type === 'error' ? 'Import Error' : 'Success'}
                       </p>
-                      <p className="break-words">{modalMessage.text}</p>
+                      <div className="break-words whitespace-pre-wrap text-sm max-h-60 overflow-y-auto">
+                        {modalMessage.text}
+                      </div>
                     </div>
                   </div>
                 </div>

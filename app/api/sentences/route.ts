@@ -127,13 +127,23 @@ export async function GET(request: Request) {
     
     // Assigned to user filter
     if (assignedToUserId) {
-      where.AND!.push({
-        assignments: {
-          some: {
-            userId: assignedToUserId
+      if (assignedToUserId === 'unassigned') {
+        // Filter for sentences with no assignments
+        where.AND!.push({
+          assignments: {
+            none: {}
           }
-        }
-      })
+        })
+      } else {
+        // Filter for sentences assigned to specific user
+        where.AND!.push({
+          assignments: {
+            some: {
+              userId: assignedToUserId
+            }
+          }
+        })
+      }
     }
 
     if (lastEditorId) {

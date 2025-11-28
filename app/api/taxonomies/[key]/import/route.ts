@@ -42,7 +42,7 @@ export async function POST(
   const records = parse(csv, { columns: true, skip_empty_lines: true, bom: true }) as any[]
 
   const errors: { row: number; message: string }[] = []
-  const seenIds = new Set<string>()
+  const seenIds = new Map<string, number[]>() // Track all row numbers for each code
   const seenLabelsPerLevel = new Map<number, Set<string>>()
   const nodes: Array<z.infer<typeof rowSchema>> = []
 
@@ -67,18 +67,41 @@ export async function POST(
       errors.push({ row: idx + 2, message: 'Code -99 is reserved for UNKNOWN labels and cannot be used as parent_id' })
       return
     }
+    
+    // Track code occurrences for duplicate detection
+    const rowNum = idx + 2 // +2 because CSV has header and 0-indexed
     if (seenIds.has(row.id)) {
-      errors.push({ row: idx + 2, message: 'duplicate id in file' })
+      seenIds.get(row.id)!.push(rowNum)
+    } else {
+      seenIds.set(row.id, [rowNum])
     }
+    
     const lvl = (row.level as any) ?? inferLevel(row, records)
     if (!seenLabelsPerLevel.has(lvl)) seenLabelsPerLevel.set(lvl, new Set<string>())
     const set = seenLabelsPerLevel.get(lvl)!
     if (set.has(row.label)) errors.push({ row: idx + 2, message: 'duplicate label in file (same level)' })
-    seenIds.add(row.id)
     set.add(row.label)
     // Attach raw parent presence info for validation stage
     nodes.push({ ...row, _parentProvided: parentProvided } as any)
   })
+
+  // Check for duplicate codes and report all violating rows
+  for (const [code, rowNumbers] of seenIds.entries()) {
+    if (rowNumbers.length > 1) {
+      const rowsList = rowNumbers.join(', ')
+      errors.push({
+        row: rowNumbers[0], // Report on first occurrence
+        message: `Duplicate code "${code}" found in rows: ${rowsList}`
+      })
+      // Also add errors for subsequent occurrences
+      for (let i = 1; i < rowNumbers.length; i++) {
+        errors.push({
+          row: rowNumbers[i],
+          message: `Duplicate code "${code}" (also appears in row ${rowNumbers[0]})`
+        })
+      }
+    }
+  }
 
   // parent existence & top-level checks
   const levelProvided = nodes.some(n => n.level != null)
@@ -131,6 +154,7 @@ export async function POST(
     }
 
     // Insert one by one (1088 rows is fine), clearer error surfacing
+    // Set isLeaf to null initially - will be recalculated after all nodes are inserted
     for (const n of nodes) {
       const level = n.level ?? inferLevel(n, nodes)
       await prisma.taxonomyNode.create({
@@ -142,10 +166,51 @@ export async function POST(
           parentCode: n.parent_id ?? undefined,
           level,
           path: buildPath(n, nodes),
-          isLeaf: !nodes.some(x => x.parent_id === n.id),
+          isLeaf: null, // Will be recalculated after import
         },
       })
     }
+
+    // Recalculate isLeaf for all nodes in this taxonomy based on actual database state
+    const allTaxonomyNodes = await prisma.taxonomyNode.findMany({
+      where: { taxonomyId: taxonomy.id },
+      select: { id: true, code: true, level: true },
+    })
+    
+    // Get all nodes that have children (parent codes) - use groupBy for reliable distinct
+    const nodesWithChildren = await prisma.taxonomyNode.groupBy({
+      by: ['parentCode'],
+      where: { 
+        taxonomyId: taxonomy.id,
+        parentCode: { not: null }
+      },
+    })
+    const parentCodeSet = new Set(
+      nodesWithChildren
+        .map(n => n.parentCode)
+        .filter((code): code is string => code !== null)
+    )
+    
+    // Batch update isLeaf for all nodes
+    const updatePromises = allTaxonomyNodes.map(async (node) => {
+      let isLeaf: boolean
+      
+      // Check if at maxDepth
+      if (node.level >= taxonomy.maxDepth) {
+        isLeaf = true
+      } else {
+        // Check if this node has children (is a parent)
+        // Use exact string comparison to handle alphanumeric codes correctly
+        isLeaf = !parentCodeSet.has(node.code)
+      }
+      
+      return prisma.taxonomyNode.update({
+        where: { id: node.id },
+        data: { isLeaf },
+      })
+    })
+    
+    await Promise.all(updatePromises)
 
     // Insert synonyms (best-effort)
     const nodesByCode = await prisma.taxonomyNode.findMany({

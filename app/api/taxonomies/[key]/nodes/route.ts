@@ -38,16 +38,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ key:
     prisma.taxonomyNode.count({ where }),
   ])
 
-  // Compute isLeaf on the fly if null
+  // Use stored isLeaf value, but recompute if null (fallback for legacy data)
   // A node is a leaf if:
-  // 1. It's explicitly marked as isLeaf, OR
-  // 2. It's at maxDepth, OR
-  // 3. It has no children
+  // 1. It's at maxDepth, OR
+  // 2. It has no children
   const enrichedItems = await Promise.all(
     items.map(async (item) => {
       let computedIsLeaf = item.isLeaf
       
-      // If isLeaf is null, compute it
+      // If isLeaf is null, compute it (fallback for legacy data or edge cases)
       if (computedIsLeaf === null) {
         // Check if at maxDepth
         if (item.level >= taxonomy.maxDepth) {

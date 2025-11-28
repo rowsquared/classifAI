@@ -183,6 +183,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Check for duplicate codes and report errors
+    const codeRowMap = new Map<string, number[]>() // Track all row numbers for each code
+    
+    records.forEach((record, idx) => {
+      const code = String(record.id).trim()
+      const rowNum = idx + 2 // +2 because CSV has header and 0-indexed
+      
+      if (codeRowMap.has(code)) {
+        codeRowMap.get(code)!.push(rowNum)
+      } else {
+        codeRowMap.set(code, [rowNum])
+      }
+    })
+    
+    // Collect duplicate code errors
+    const duplicateErrors: string[] = []
+    for (const [code, rowNumbers] of codeRowMap.entries()) {
+      if (rowNumbers.length > 1) {
+        const rowsList = rowNumbers.join(', ')
+        duplicateErrors.push(`Duplicate code "${code}" found in rows: ${rowsList}`)
+      }
+    }
+    
+    if (duplicateErrors.length > 0) {
+      return NextResponse.json({ 
+        ok: false, 
+        error: `Duplicate codes found in CSV:\n${duplicateErrors.join('\n')}` 
+      }, { status: 400 })
+    }
+
     // Auto-clean CSV data (same logic as existing import)
     const idSet = new Set<string>()
     const seenIds = new Map<string, number>()
@@ -193,7 +223,7 @@ export async function POST(req: NextRequest) {
       const level = parseInt(String(record.level).trim())
       const label = String(record.label || '').trim()
 
-      // Drop duplicate IDs (keep first occurrence)
+      // Drop duplicate IDs (keep first occurrence) - this shouldn't happen now due to validation above
       if (seenIds.has(rowId)) {
         return false
       }

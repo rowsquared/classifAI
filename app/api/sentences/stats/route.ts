@@ -99,11 +99,21 @@ export async function GET(req: NextRequest) {
     // Assigned to filter
     const assignedToUserId = searchParams.get('assignedToUserId')
     if (assignedToUserId) {
-      AND.push({
-        assignments: {
-          some: { userId: assignedToUserId }
-        }
-      })
+      if (assignedToUserId === 'unassigned') {
+        // Filter for sentences with no assignments
+        AND.push({
+          assignments: {
+            none: {}
+          }
+        })
+      } else {
+        // Filter for sentences assigned to specific user
+        AND.push({
+          assignments: {
+            some: { userId: assignedToUserId }
+          }
+        })
+      }
     }
 
     // Date range filter
