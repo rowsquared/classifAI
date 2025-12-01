@@ -63,6 +63,19 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
   const [submitting, setSubmitting] = useState(false)
   const [syncingKeys, setSyncingKeys] = useState<Set<string>>(new Set())
   const [learningKeys, setLearningKeys] = useState<Set<string>>(new Set())
+  
+  // Validation states
+  const [validating, setValidating] = useState(false)
+  const [validationResult, setValidationResult] = useState<{
+    ok: boolean
+    message?: string
+    error?: string
+    errors?: Array<{ row: number; message: string }>
+    recordCount?: number
+  } | null>(null)
+  
+  // Detected max depth from CSV
+  const [detectedMaxDepth, setDetectedMaxDepth] = useState<number | null>(null)
 
   async function loadTaxonomies() {
     try {
@@ -96,7 +109,45 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
       file: null
     })
     setModalMessage(null)
+    setValidationResult(null)
+    setDetectedMaxDepth(null)
     setCreateModalOpen(true)
+  }
+  
+  // Detect max depth from CSV file
+  async function detectMaxDepthFromFile(file: File): Promise<number | null> {
+    try {
+      const buffer = await file.arrayBuffer()
+      const csv = new TextDecoder().decode(buffer)
+      const { parse } = await import('csv-parse/sync')
+      const records = parse(csv, { 
+        columns: true, 
+        skip_empty_lines: true, 
+        bom: true,
+        cast: false 
+      }) as any[]
+      
+      if (!records || records.length === 0) {
+        return null
+      }
+      
+      // Find the maximum level value in the CSV
+      let maxLevel = 0
+      for (const record of records) {
+        const level = record.level
+        if (level != null) {
+          const levelNum = parseInt(String(level).trim(), 10)
+          if (!isNaN(levelNum) && levelNum > maxLevel) {
+            maxLevel = levelNum
+          }
+        }
+      }
+      
+      return maxLevel > 0 ? maxLevel : null
+    } catch (error) {
+      console.error('Error detecting max depth:', error)
+      return null
+    }
   }
 
   function openEditModal(taxonomy: Taxonomy) {
@@ -117,11 +168,50 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     setDeleteModalOpen(true)
   }
 
+  async function validateFile() {
+    if (!formData.file) {
+      setValidationResult({
+        ok: false,
+        error: 'Please select a file first',
+        errors: [{ row: 0, message: 'No file selected' }]
+      })
+      return
+    }
+
+    setValidating(true)
+    setValidationResult(null)
+
+    try {
+      const formDataToSend = new FormData()
+      formDataToSend.append('file', formData.file)
+
+      const res = await fetch('/api/taxonomies/validate', {
+        method: 'POST',
+        body: formDataToSend
+      })
+
+      const data = await res.json()
+      setValidationResult(data)
+    } catch (error: any) {
+      console.error('Validation error:', error)
+      setValidationResult({
+        ok: false,
+        error: error.message || 'An unexpected error occurred during validation',
+        errors: [{ row: 0, message: error.message || 'An unexpected error occurred during validation' }]
+      })
+    } finally {
+      setValidating(false)
+    }
+  }
+
   async function handleCreate() {
     if (!formData.key || !formData.file) {
       setModalMessage({ type: 'error', text: 'Please fill all required fields and upload a file' })
       return
     }
+
+    // Use detected max depth or fallback to formData.maxDepth
+    const maxDepth = detectedMaxDepth || formData.maxDepth
 
     setSubmitting(true)
     setModalMessage(null)
@@ -130,7 +220,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
       const formDataToSend = new FormData()
       formDataToSend.append('key', formData.key)
       if (formData.description) formDataToSend.append('description', formData.description)
-      formDataToSend.append('maxDepth', formData.maxDepth.toString())
+      formDataToSend.append('maxDepth', maxDepth.toString())
       if (Object.keys(formData.levelNames).length > 0) {
         formDataToSend.append('levelNames', JSON.stringify(formData.levelNames))
       }
@@ -147,10 +237,18 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
         setMessage({ type: 'success', text: `Successfully created taxonomy "${formData.key}" with ${data.importedNodes} nodes!` })
         setCreateModalOpen(false)
         setModalMessage(null)
+        setValidationResult(null)
         loadTaxonomies()
       } else {
+        // Format errors array if present
+        let errorText = data.error || 'Failed to create taxonomy'
+        if (data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+          const errorList = data.errors.slice(0, 20).map((e: any) => `Row ${e.row}: ${e.message}`).join('\n')
+          const moreErrors = data.errors.length > 20 ? `\n... and ${data.errors.length - 20} more errors` : ''
+          errorText = `${errorText}\n\n${errorList}${moreErrors}`
+        }
         // Show error in modal so user doesn't lose form data
-        setModalMessage({ type: 'error', text: data.error || 'Failed to create taxonomy' })
+        setModalMessage({ type: 'error', text: errorText })
       }
     } catch (error) {
       setModalMessage({ type: 'error', text: 'Network error' })
@@ -186,7 +284,14 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
         setEditModalOpen(false)
         loadTaxonomies()
       } else {
-        setMessage({ type: 'error', text: data.error || 'Failed to update taxonomy' })
+        // Format errors array if present
+        let errorText = data.error || 'Failed to update taxonomy'
+        if (data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+          const errorList = data.errors.slice(0, 20).map((e: any) => `Row ${e.row}: ${e.message}`).join('\n')
+          const moreErrors = data.errors.length > 20 ? `\n... and ${data.errors.length - 20} more errors` : ''
+          errorText = `${errorText}\n\n${errorList}${moreErrors}`
+        }
+        setMessage({ type: 'error', text: errorText })
       }
     } catch (error) {
       setMessage({ type: 'error', text: 'Network error' })
@@ -379,7 +484,9 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
               ? 'bg-green-50 text-green-800 border border-green-200' 
               : 'bg-red-50 text-red-800 border border-red-200'
           }`}>
-            {message.text}
+            <div className="whitespace-pre-wrap text-sm max-h-60 overflow-y-auto">
+              {message.text}
+            </div>
           </div>
         )}
 
@@ -555,7 +662,10 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
             <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-gray-900">Create New Taxonomy</h2>
               <button
-                onClick={() => setCreateModalOpen(false)}
+                onClick={() => {
+                  setCreateModalOpen(false)
+                  setValidationResult(null)
+                }}
                 className="text-gray-500 hover:text-gray-700 text-2xl"
               >
                 ×
@@ -592,41 +702,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Maximum Depth *
-                </label>
-                <select
-                  value={formData.maxDepth}
-                  onChange={e => setFormData({...formData, maxDepth: parseInt(e.target.value)})}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
-                >
-                  {[1, 2, 3, 4, 5].map(d => (
-                    <option key={d} value={d}>{d} level{d > 1 ? 's' : ''}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Level Names (optional)
-                </label>
-                <div className="space-y-2">
-                  {Array.from({ length: formData.maxDepth }, (_, i) => i + 1).map(level => (
-                    <div key={level} className="flex items-center gap-2">
-                      <span className="text-sm text-gray-600 w-16">Level {level}:</span>
-                      <input
-                        type="text"
-                        value={formData.levelNames[level.toString()] || ''}
-                        onChange={e => updateLevelName(level, e.target.value)}
-                        placeholder={`Level ${level}`}
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
                   CSV File *
                 </label>
                 <div className="flex items-center gap-3">
@@ -634,7 +709,40 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                     <input
                       type="file"
                       accept=".csv"
-                      onChange={e => setFormData({...formData, file: e.target.files?.[0] || null})}
+                      onChange={async (e) => {
+                        const newFile = e.target.files?.[0] || null
+                        
+                        // Always update file immediately
+                        setFormData(prev => ({ 
+                          ...prev, 
+                          file: newFile || null
+                        }))
+                        
+                        // Clear validation results when file changes
+                        setValidationResult(null)
+                        
+                        // Detect max depth from the CSV file (async, doesn't block file setting)
+                        if (newFile) {
+                          detectMaxDepthFromFile(newFile).then(maxDepth => {
+                            setDetectedMaxDepth(maxDepth)
+                            if (maxDepth) {
+                              // Update formData.maxDepth to match detected depth
+                              setFormData(prev => ({ 
+                                ...prev, 
+                                maxDepth: maxDepth 
+                              }))
+                            }
+                          }).catch(err => {
+                            console.error('Error detecting max depth:', err)
+                          })
+                        } else {
+                          setDetectedMaxDepth(null)
+                          setFormData(prev => ({ 
+                            ...prev, 
+                            maxDepth: 5 
+                          }))
+                        }
+                      }}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                       id="create-file-input"
                     />
@@ -650,10 +758,91 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                   >
                     Choose file...
                   </label>
+                  {formData.file && (
+                    <button
+                      onClick={validateFile}
+                      disabled={validating}
+                      className="px-6 py-2.5 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                    >
+                      {validating ? 'Validating...' : 'Validate File'}
+                    </button>
+                  )}
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  ℹ️ Required: id, label, parent_id, level | Optional: definition, synonyms
+                  ℹ️ Required: id, label, parent_id, level | Optional: definition, examples, synonyms
                 </p>
+                {detectedMaxDepth && (
+                  <p className="text-xs text-indigo-600 mt-1">
+                    ✓ Detected maximum depth: {detectedMaxDepth} level{detectedMaxDepth > 1 ? 's' : ''}
+                  </p>
+                )}
+                
+                {/* Validation Results */}
+                {validationResult && (
+                  <div className={`mt-3 p-4 rounded-lg text-sm ${
+                    validationResult.ok
+                      ? 'bg-green-50 text-green-800 border border-green-200'
+                      : 'bg-red-50 text-red-800 border border-red-200'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      <span className="text-lg flex-shrink-0">
+                        {validationResult.ok ? '✅' : '⚠️'}
+                      </span>
+                      <div className="flex-1">
+                        <p className="font-medium mb-1">
+                          {validationResult.ok ? 'Validation Passed' : 'Validation Failed'}
+                        </p>
+                        {validationResult.ok ? (
+                          <p>{validationResult.message || `File is valid! Found ${validationResult.recordCount || 0} records.`}</p>
+                        ) : (
+                          <div className="break-words whitespace-pre-wrap text-sm max-h-60 overflow-y-auto">
+                            {validationResult.error && (
+                              <p className="mb-2">{validationResult.error}</p>
+                            )}
+                            {validationResult.errors && validationResult.errors.length > 0 && (
+                              <div className="mt-2">
+                                <p className="font-medium mb-1">Errors:</p>
+                                <ul className="list-disc list-inside space-y-1">
+                                  {validationResult.errors.slice(0, 20).map((err, idx) => (
+                                    <li key={idx}>Row {err.row}: {err.message}</li>
+                                  ))}
+                                  {validationResult.errors.length > 20 && (
+                                    <li className="text-gray-600">... and {validationResult.errors.length - 20} more errors</li>
+                                  )}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Level Names (optional)
+                </label>
+                <div className="space-y-2">
+                  {Array.from({ length: detectedMaxDepth || formData.maxDepth }, (_, i) => i + 1).map(level => (
+                    <div key={level} className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600 w-16">Level {level}:</span>
+                      <input
+                        type="text"
+                        value={formData.levelNames[level.toString()] || ''}
+                        onChange={e => updateLevelName(level, e.target.value)}
+                        placeholder={`Level ${level}`}
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-900"
+                      />
+                    </div>
+                  ))}
+                </div>
+                {!detectedMaxDepth && !formData.file && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    ℹ️ Upload a CSV file to automatically detect the maximum depth
+                  </p>
+                )}
               </div>
 
               {/* Modal Error Message - Below file chooser */}
@@ -682,7 +871,10 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
 
             <div className="sticky bottom-0 bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-200">
               <button
-                onClick={() => setCreateModalOpen(false)}
+                onClick={() => {
+                  setCreateModalOpen(false)
+                  setValidationResult(null)
+                }}
                 disabled={submitting}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700"
               >
@@ -690,7 +882,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
               </button>
               <button
                 onClick={handleCreate}
-                disabled={submitting || !formData.key || !formData.file}
+                disabled={submitting || !formData.key || !formData.file || (validationResult !== null && !validationResult.ok)}
                 className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {submitting ? 'Creating...' : 'Create & Import'}

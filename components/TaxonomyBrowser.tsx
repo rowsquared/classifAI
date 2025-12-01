@@ -28,6 +28,7 @@ export type TaxonomyNode = {
   parentCode: string | null
   isLeaf: boolean
   definition?: string
+  examples?: string
 }
 
 export type SelectedLabel = {
@@ -36,6 +37,7 @@ export type SelectedLabel = {
   taxonomyKey: string
   label?: string
   definition?: string
+  examples?: string
   isLeaf?: boolean
   source?: 'user' | 'ai'
   confidenceScore?: number
@@ -45,6 +47,22 @@ export type Taxonomy = {
   key: string
   maxDepth: number
   levelNames?: Record<string, string> | null
+}
+
+// Helper function to build tooltip content from definition and examples
+function buildTooltipContent(definition?: string, examples?: string): string {
+  const parts: string[] = []
+  if (definition) {
+    parts.push(definition)
+  }
+  if (examples) {
+    if (parts.length > 0) {
+      parts.push('\n\n**Examples:**\n' + examples)
+    } else {
+      parts.push('**Examples:**\n' + examples)
+    }
+  }
+  return parts.join('')
 }
 
 interface TaxonomyBrowserProps {
@@ -464,6 +482,7 @@ export default function TaxonomyBrowser({
         taxonomyKey: taxonomy.key,
         label: pathNode.label,
         definition: pathNode.definition,
+        examples: pathNode.examples,
         isLeaf: pathNode.isLeaf || pathNode.level >= taxonomy.maxDepth
       }))
       
@@ -479,6 +498,7 @@ export default function TaxonomyBrowser({
         taxonomyKey: taxonomy.key,
         label: node.label,
         definition: node.definition,
+        examples: node.examples,
         isLeaf
       }
       
@@ -605,7 +625,7 @@ export default function TaxonomyBrowser({
                       <span className="ml-2 font-medium">
                         {isUnknownNodeCode(label.nodeCode) ? 'Unknown' : `${label.nodeCode} - ${label.label || 'Loading...'}`}
                       </span>
-                      {label.definition && (
+                      {(label.definition || label.examples) && (
                         <Info className="ml-1 w-3.5 h-3.5 text-gray-400 flex-shrink-0" strokeWidth={2.5} />
                       )}
                       {label.source === 'ai' && (
@@ -630,9 +650,10 @@ export default function TaxonomyBrowser({
                     </div>
                   )
 
-                  if (label.definition) {
+                  if (label.definition || label.examples) {
+                    const tooltipContent = buildTooltipContent(label.definition, label.examples)
                     return (
-                      <Tooltip key={i} content={label.definition} side="top">
+                      <Tooltip key={i} content={tooltipContent} side="top">
                         {chipContent}
                       </Tooltip>
                     )
@@ -769,7 +790,7 @@ export default function TaxonomyBrowser({
                               L{node.level}
                             </span>
                           )}
-                          {node.definition && (
+                          {(node.definition || node.examples) && (
                             <Info className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" strokeWidth={2.5} />
                           )}
                         </div>
@@ -786,10 +807,11 @@ export default function TaxonomyBrowser({
                 </div>
               )
 
-              // Wrap with tooltip if definition exists
-              if (node.definition) {
+              // Wrap with tooltip if definition or examples exist
+              if (node.definition || node.examples) {
+                const tooltipContent = buildTooltipContent(node.definition, node.examples)
                 return (
-                  <Tooltip key={node.code} content={node.definition} side="right">
+                  <Tooltip key={node.code} content={tooltipContent} side="right">
                     {nodeContent}
                   </Tooltip>
                 )

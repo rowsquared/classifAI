@@ -30,6 +30,7 @@ export async function POST(
         level: true,
         label: true,
         definition: true,
+        examples: true,
         parentCode: true,
         isLeaf: true
       },
@@ -60,6 +61,7 @@ export async function POST(
           level: node.level,
           label: node.label,
           definition: node.definition,
+          examples: node.examples,
           parentCode: node.parentCode,
           isLeaf: node.isLeaf ?? undefined
         })),

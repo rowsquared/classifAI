@@ -15,6 +15,7 @@ const rowSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   definition: z.string().optional().nullable(),
+  examples: z.string().optional().nullable(),
   synonyms: z.string().optional().nullable(),
   parent_id: z.preprocess(emptyToNull, z.string().min(1).nullable()).optional().nullable(),
   level: z.preprocess(emptyToNull, z.coerce.number().int().min(1).max(5).nullable()).optional().nullable(),
@@ -39,10 +40,47 @@ export async function POST(
     return NextResponse.json({ error: 'Content-Type must be text/csv' }, { status: 400 })
   }
   const csv = await req.text()
-  const records = parse(csv, { columns: true, skip_empty_lines: true, bom: true }) as any[]
+  // Use cast: false to preserve leading zeros in id and parent_id columns
+  const records = parse(csv, { columns: true, skip_empty_lines: true, bom: true, cast: false }) as any[]
 
   const errors: { row: number; message: string }[] = []
-  const seenIds = new Map<string, number[]>() // Track all row numbers for each code
+  
+  // Validate CSV headers
+  if (!records || records.length === 0) {
+    return NextResponse.json({ 
+      ok: false, 
+      error: 'CSV file is empty or contains no data rows',
+      errors: [{ row: 0, message: 'CSV file is empty or contains no data rows' }]
+    }, { status: 400 })
+  }
+
+  const headers = Object.keys(records[0] || {})
+  const requiredHeaders = ['id', 'label', 'parent_id', 'level']
+  const allowedOptionalHeaders = ['definition', 'examples', 'synonyms']
+  const allAllowedHeaders = [...requiredHeaders, ...allowedOptionalHeaders]
+  
+  // Check for missing required columns
+  const missingHeaders = requiredHeaders.filter(h => !headers.includes(h))
+  if (missingHeaders.length > 0) {
+    return NextResponse.json({ 
+      ok: false, 
+      error: `Missing required columns: ${missingHeaders.join(', ')}. The CSV must contain: id, label, parent_id, and level.`,
+      errors: [{ row: 0, message: `Missing required columns: ${missingHeaders.join(', ')}` }]
+    }, { status: 400 })
+  }
+  
+  // Check for disallowed columns
+  const disallowedHeaders = headers.filter(h => !allAllowedHeaders.includes(h))
+  if (disallowedHeaders.length > 0) {
+    return NextResponse.json({ 
+      ok: false, 
+      error: `Disallowed columns found: ${disallowedHeaders.join(', ')}. Only the following columns are allowed: ${allAllowedHeaders.join(', ')}.`,
+      errors: [{ row: 0, message: `Disallowed columns: ${disallowedHeaders.join(', ')}` }]
+    }, { status: 400 })
+  }
+
+  const seenIds = new Map<string, number[]>() // Track all row numbers for each id (preserve leading zeros)
+  const allIds = new Set<string>() // All id values for parent_id validation
   const seenLabelsPerLevel = new Map<number, Set<string>>()
   const nodes: Array<z.infer<typeof rowSchema>> = []
 
@@ -68,12 +106,13 @@ export async function POST(
       return
     }
     
-    // Track code occurrences for duplicate detection
+    // Track id occurrences for duplicate detection (preserve leading zeros with string comparison)
     const rowNum = idx + 2 // +2 because CSV has header and 0-indexed
     if (seenIds.has(row.id)) {
       seenIds.get(row.id)!.push(rowNum)
     } else {
       seenIds.set(row.id, [rowNum])
+      allIds.add(row.id) // Add to set for parent_id validation
     }
     
     const lvl = (row.level as any) ?? inferLevel(row, records)
@@ -85,19 +124,35 @@ export async function POST(
     nodes.push({ ...row, _parentProvided: parentProvided } as any)
   })
 
-  // Check for duplicate codes and report all violating rows
-  for (const [code, rowNumbers] of seenIds.entries()) {
+  // Check for duplicate ids and report all violating rows
+  for (const [id, rowNumbers] of seenIds.entries()) {
     if (rowNumbers.length > 1) {
       const rowsList = rowNumbers.join(', ')
       errors.push({
         row: rowNumbers[0], // Report on first occurrence
-        message: `Duplicate code "${code}" found in rows: ${rowsList}`
+        message: `Duplicate id "${id}" found in rows: ${rowsList}`
       })
       // Also add errors for subsequent occurrences
       for (let i = 1; i < rowNumbers.length; i++) {
         errors.push({
           row: rowNumbers[i],
-          message: `Duplicate code "${code}" (also appears in row ${rowNumbers[0]})`
+          message: `Duplicate id "${id}" (also appears in row ${rowNumbers[0]})`
+        })
+      }
+    }
+  }
+
+  // Validate parent_id values exist in id column
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i]
+    const rowNum = i + 2 // +2 because CSV has header and 0-indexed
+    
+    if (n.parent_id != null && n.parent_id.trim() !== '') {
+      const parentId = String(n.parent_id).trim()
+      if (!allIds.has(parentId)) {
+        errors.push({ 
+          row: rowNum, 
+          message: `parent_id "${parentId}" does not match any id value in the file` 
         })
       }
     }
@@ -106,19 +161,15 @@ export async function POST(
   // parent existence & top-level checks
   const levelProvided = nodes.some(n => n.level != null)
   if (levelProvided) {
-    for (const n of nodes as any[]) {
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i] as any
+      const rowNum = i + 2
       if ((n.level as any) === 1 && n._parentProvided) {
-        errors.push({ row: nodes.indexOf(n as any) + 2, message: 'level 1 must have missing parent_id' })
+        errors.push({ row: rowNum, message: 'level 1 must have missing parent_id' })
       }
       if ((n.level as any)! > (taxonomy.maxDepth ?? 5)) {
-        errors.push({ row: nodes.indexOf(n as any) + 2, message: `level exceeds taxonomy.maxDepth` })
+        errors.push({ row: rowNum, message: `level exceeds taxonomy.maxDepth` })
       }
-    }
-  }
-  const idSet = new Set(nodes.map(n => n.id))
-  for (const n of nodes) {
-    if (n.parent_id != null && !idSet.has(n.parent_id)) {
-      errors.push({ row: nodes.indexOf(n) + 2, message: 'parent_id not found in file' })
     }
   }
 
@@ -162,7 +213,8 @@ export async function POST(
           taxonomyId: taxonomy.id,
           code: n.id,
           label: n.label,
-          definition: n.definition ?? undefined,
+          definition: (n.definition && String(n.definition).trim()) || null,
+          examples: (n.examples && String(n.examples).trim()) || null,
           parentCode: n.parent_id ?? undefined,
           level,
           path: buildPath(n, nodes),

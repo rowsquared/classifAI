@@ -55,7 +55,8 @@ export async function PUT(
       // Parse CSV
       const buffer = Buffer.from(await file.arrayBuffer())
       const csv = buffer.toString('utf-8')
-      const records = parse(csv, { columns: true, skip_empty_lines: true, bom: true }) as any[]
+      // Use cast: false to preserve leading zeros in id and parent_id columns
+      const records = parse(csv, { columns: true, skip_empty_lines: true, bom: true, cast: false }) as any[]
 
       if (records.length === 0) {
         return NextResponse.json({ 
@@ -65,80 +66,119 @@ export async function PUT(
       }
 
       // Validate CSV headers
+      if (!records || records.length === 0) {
+        return NextResponse.json({ 
+          ok: false, 
+          error: 'CSV file is empty or contains no data rows' 
+        }, { status: 400 })
+      }
+
       const headers = Object.keys(records[0] || {})
       const requiredHeaders = ['id', 'label', 'parent_id', 'level']
-      const optionalHeaders = ['definition', 'synonyms']
-      const missingHeaders = requiredHeaders.filter(h => !headers.includes(h))
+      const allowedOptionalHeaders = ['definition', 'examples', 'synonyms']
+      const allAllowedHeaders = [...requiredHeaders, ...allowedOptionalHeaders]
       
+      // Check for missing required columns
+      const missingHeaders = requiredHeaders.filter(h => !headers.includes(h))
       if (missingHeaders.length > 0) {
         return NextResponse.json({ 
           ok: false, 
-          error: `Missing required columns: ${missingHeaders.join(', ')}` 
+          error: `Missing required columns: ${missingHeaders.join(', ')}. The CSV must contain: id, label, parent_id, and level.`,
+          errors: [{ row: 0, message: `Missing required columns: ${missingHeaders.join(', ')}` }]
         }, { status: 400 })
       }
-
-      // Auto-clean CSV data
-      const idSet = new Set<string>()
-      const seenIds = new Map<string, number>()
-      const levelMap = new Map<number, Set<string>>()
       
-      const cleanedRecords = records.filter((record, idx) => {
-        const rowId = String(record.id).trim()
-        const level = parseInt(String(record.level).trim())
-        const label = String(record.label || '').trim()
-
-        if (isUnknownNodeCode(rowId)) {
-          throw new Error('CSV contains IDs that are reserved for unknown labels (-9, -99, ...). Please rename those rows.')
-        }
-
-        const parentRaw = record.parent_id && String(record.parent_id).trim()
-        if (parentRaw && isUnknownNodeCode(parentRaw)) {
-          throw new Error('CSV contains parent IDs that are reserved for unknown labels (-9, -99, ...). Please adjust the hierarchy.')
-        }
-
-        // Drop duplicate IDs (keep first occurrence)
-        if (seenIds.has(rowId)) {
-          return false
-        }
-        seenIds.set(rowId, idx)
-
-        // Clear parent_id for level 1
-        if (level === 1) {
-          record.parent_id = ''
-        }
-
-        // Deduplicate labels per level
-        if (!levelMap.has(level)) {
-          levelMap.set(level, new Set())
-        }
-        const levelLabels = levelMap.get(level)!
-        if (levelLabels.has(label)) {
-          return false
-        }
-        levelLabels.add(label)
-
-        idSet.add(rowId)
-        return true
-      })
-
-      // Drop rows with missing parents
-      const finalRecords = cleanedRecords.filter((record) => {
-        const level = parseInt(String(record.level).trim())
-        if (level === 1) return true
-        
-        const parentId = String(record.parent_id || '').trim()
-        if (!parentId || !idSet.has(parentId)) {
-          return false
-        }
-        return true
-      })
-
-      if (finalRecords.length === 0) {
+      // Check for disallowed columns
+      const disallowedHeaders = headers.filter(h => !allAllowedHeaders.includes(h))
+      if (disallowedHeaders.length > 0) {
         return NextResponse.json({ 
           ok: false, 
-          error: 'No valid rows after cleaning' 
+          error: `Disallowed columns found: ${disallowedHeaders.join(', ')}. Only the following columns are allowed: ${allAllowedHeaders.join(', ')}.`,
+          errors: [{ row: 0, message: `Disallowed columns: ${disallowedHeaders.join(', ')}` }]
         }, { status: 400 })
       }
+
+      // Validate data: check for duplicate ids and invalid parent_ids
+      const validationErrors: Array<{ row: number; message: string }> = []
+      const idRowMap = new Map<string, number[]>() // Track all row numbers for each id (preserve leading zeros)
+      const allIds = new Set<string>() // All id values for parent_id validation
+      
+      // First pass: collect all ids and check for duplicates
+      records.forEach((record, idx) => {
+        const rowNum = idx + 2 // +2 because CSV has header and 0-indexed
+        const id = String(record.id).trim()
+        
+        // Validate that id is not -99 (reserved for UNKNOWN)
+        if (isUnknownNodeCode(id)) {
+          validationErrors.push({
+            row: rowNum,
+            message: 'Code -99 is reserved for UNKNOWN labels and cannot be used'
+          })
+          return
+        }
+        
+        // Track id occurrences for duplicate detection (preserve leading zeros with string comparison)
+        if (idRowMap.has(id)) {
+          idRowMap.get(id)!.push(rowNum)
+        } else {
+          idRowMap.set(id, [rowNum])
+          allIds.add(id)
+        }
+      })
+      
+      // Report duplicate ids
+      for (const [id, rowNumbers] of idRowMap.entries()) {
+        if (rowNumbers.length > 1) {
+          const rowsList = rowNumbers.join(', ')
+          validationErrors.push({
+            row: rowNumbers[0],
+            message: `Duplicate id "${id}" found in rows: ${rowsList}`
+          })
+          // Also add errors for subsequent occurrences
+          for (let i = 1; i < rowNumbers.length; i++) {
+            validationErrors.push({
+              row: rowNumbers[i],
+              message: `Duplicate id "${id}" (also appears in row ${rowNumbers[0]})`
+            })
+          }
+        }
+      }
+      
+      // Second pass: validate parent_id values exist in id column
+      records.forEach((record, idx) => {
+        const rowNum = idx + 2
+        const parentId = record.parent_id ? String(record.parent_id).trim() : ''
+        
+        // Validate that parent_id is not -99 (reserved for UNKNOWN)
+        if (parentId && isUnknownNodeCode(parentId)) {
+          validationErrors.push({
+            row: rowNum,
+            message: 'Code -99 is reserved for UNKNOWN labels and cannot be used as parent_id'
+          })
+          return
+        }
+        
+        // Check if parent_id exists in id column (only if parent_id is provided and not empty)
+        if (parentId && !allIds.has(parentId)) {
+          validationErrors.push({
+            row: rowNum,
+            message: `parent_id "${parentId}" does not match any id value in the file`
+          })
+        }
+      })
+      
+      // Return all validation errors if any found
+      if (validationErrors.length > 0) {
+        const errorMessages = validationErrors.map(e => `Row ${e.row}: ${e.message}`).join('\n')
+        return NextResponse.json({ 
+          ok: false, 
+          error: `Validation failed:\n${errorMessages}`,
+          errors: validationErrors
+        }, { status: 400 })
+      }
+
+      // All validation passed, use records as-is
+      const finalRecords = records
 
       // Update taxonomy and REPLACE nodes in transaction
       await prisma.$transaction(async (tx) => {
@@ -169,7 +209,8 @@ export async function PUT(
           }
 
           const level = parseInt(String(record.level).trim())
-          const definition = String(record.definition || '').trim()
+          const definition = String(record.definition || '').trim() || null
+          const examples = String(record.examples || '').trim() || null
           const pathParts: string[] = []
           let currentCode: string | null = code
           const guard = new Set<string>()
@@ -189,7 +230,8 @@ export async function PUT(
             code,
             level,
             label: String(record.label || '').trim(),
-            definition: definition || null,
+            definition: definition,
+            examples: examples,
             parentCode,
             path: path || null,
             isLeaf: hasChildren ? false : true
@@ -339,4 +381,5 @@ export async function DELETE(
     }, { status: 500 })
   }
 }
+
 

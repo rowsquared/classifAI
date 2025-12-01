@@ -90,6 +90,7 @@ model TaxonomyNode {
   taxonomyId   String
   label        String
   definition   String?
+  examples     String?
   parentCode   String?
   level        Int
   path         String?
