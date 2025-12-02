@@ -29,6 +29,7 @@ export type Taxonomy = {
   lastLearningStatus?: string | null
   lastLearningError?: string | null
   newAnnotationsSinceLastLearning: number
+  lastExternalTrainingAt?: string | null
 }
 
 type Props = {
@@ -63,6 +64,29 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
   const [submitting, setSubmitting] = useState(false)
   const [syncingKeys, setSyncingKeys] = useState<Set<string>>(new Set())
   const [learningKeys, setLearningKeys] = useState<Set<string>>(new Set())
+  const [trainingKeys, setTrainingKeys] = useState<Set<string>>(new Set())
+  
+  // External training modal states
+  const [externalTrainingModalOpen, setExternalTrainingModalOpen] = useState(false)
+  const [selectedTaxonomyForTraining, setSelectedTaxonomyForTraining] = useState<Taxonomy | null>(null)
+  const [trainingFile, setTrainingFile] = useState<File | null>(null)
+  const [validatingTraining, setValidatingTraining] = useState(false)
+  const [trainingValidationResult, setTrainingValidationResult] = useState<{
+    ok: boolean
+    message?: string
+    error?: string
+    errors?: Array<{ row: number; message: string }>
+    recordCount?: number
+  } | null>(null)
+  const [uploadingTraining, setUploadingTraining] = useState(false)
+  const [trainingUploadResult, setTrainingUploadResult] = useState<{
+    ok: boolean
+    jobId?: string
+    fileName?: string
+    recordCount?: number
+    trainingDataUrl?: string
+    error?: string
+  } | null>(null)
   
   // Validation states
   const [validating, setValidating] = useState(false)
@@ -346,6 +370,145 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     return learningKeys.has(key)
   }
 
+  function isTraining(key: string) {
+    return trainingKeys.has(key)
+  }
+
+  function openExternalTrainingModal(taxonomy: Taxonomy) {
+    setSelectedTaxonomyForTraining(taxonomy)
+    setTrainingFile(null)
+    setTrainingValidationResult(null)
+    setTrainingUploadResult(null)
+    setExternalTrainingModalOpen(true)
+  }
+
+  async function validateTrainingFile() {
+    if (!trainingFile || !selectedTaxonomyForTraining) {
+      setTrainingValidationResult({
+        ok: false,
+        error: 'Please select a file first',
+        errors: [{ row: 0, message: 'No file selected' }]
+      })
+      return
+    }
+
+    setValidatingTraining(true)
+    setTrainingValidationResult(null)
+
+    try {
+      const formDataToSend = new FormData()
+      formDataToSend.append('file', trainingFile)
+      formDataToSend.append('taxonomyKey', selectedTaxonomyForTraining.key)
+
+      const res = await fetch('/api/ai-labeling/external-training/validate', {
+        method: 'POST',
+        body: formDataToSend
+      })
+
+      const data = await res.json()
+      setTrainingValidationResult(data)
+    } catch (error: any) {
+      console.error('Validation error:', error)
+      setTrainingValidationResult({
+        ok: false,
+        error: error.message || 'An unexpected error occurred during validation',
+        errors: [{ row: 0, message: error.message || 'An unexpected error occurred during validation' }]
+      })
+    } finally {
+      setValidatingTraining(false)
+    }
+  }
+
+  async function uploadAndStartTraining() {
+    if (!trainingFile || !selectedTaxonomyForTraining || !trainingValidationResult?.ok) {
+      return
+    }
+
+    setUploadingTraining(true)
+    setTrainingUploadResult(null)
+
+    try {
+      // Step 1: Upload CSV and convert to JSON
+      const uploadFormData = new FormData()
+      uploadFormData.append('file', trainingFile)
+      uploadFormData.append('taxonomyKey', selectedTaxonomyForTraining.key)
+
+      const uploadRes = await fetch('/api/ai-labeling/external-training/upload', {
+        method: 'POST',
+        body: uploadFormData
+      })
+
+      const uploadData = await uploadRes.json()
+
+      if (!uploadRes.ok) {
+        setTrainingUploadResult({
+          ok: false,
+          error: uploadData.error || 'Failed to upload training data'
+        })
+        return
+      }
+
+      // Step 2: Start the training job
+      setTrainingKeys(prev => new Set(prev).add(selectedTaxonomyForTraining.key))
+      
+      const startRes = await fetch('/api/ai-labeling/external-training/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taxonomyKey: selectedTaxonomyForTraining.key,
+          trainingDataUrl: uploadData.trainingDataUrl,
+          fileName: uploadData.fileName,
+          recordCount: uploadData.recordCount
+        })
+      })
+
+      const startData = await startRes.json()
+
+      if (startRes.ok) {
+        setTrainingUploadResult({
+          ok: true,
+          jobId: startData.job?.id,
+          fileName: uploadData.fileName,
+          recordCount: uploadData.recordCount,
+          trainingDataUrl: uploadData.trainingDataUrl
+        })
+        setMessage({ 
+          type: 'success', 
+          text: `External training job started for "${selectedTaxonomyForTraining.key}" with ${uploadData.recordCount} records` 
+        })
+        // Delay reload to avoid flashing - let the badge update first
+        setTimeout(() => {
+          loadTaxonomies()
+        }, 500)
+        // Close modal after a short delay
+        setTimeout(() => {
+          setExternalTrainingModalOpen(false)
+          setTrainingFile(null)
+          setTrainingValidationResult(null)
+          setTrainingUploadResult(null)
+        }, 2000)
+      } else {
+        setTrainingUploadResult({
+          ok: false,
+          error: startData.error || 'Failed to start training job'
+        })
+      }
+    } catch (error) {
+      console.error('Training job error:', error)
+      setTrainingUploadResult({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Network error while starting training job'
+      })
+    } finally {
+      setUploadingTraining(false)
+      setTrainingKeys(prev => {
+        const next = new Set(prev)
+        next.delete(selectedTaxonomyForTraining.key)
+        return next
+      })
+    }
+  }
+
   async function handleSyncAI(taxonomy: Taxonomy) {
     try {
       setSyncingKeys(prev => new Set(prev).add(taxonomy.key))
@@ -356,7 +519,10 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
       const data = await res.json()
       if (res.ok) {
         setMessage({ type: 'success', text: `AI sync started for "${taxonomy.key}" (job ${data.jobId})` })
-        loadTaxonomies()
+        // Delay reload to avoid flashing - let the badge update first
+        setTimeout(() => {
+          loadTaxonomies()
+        }, 500)
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to start AI sync' })
       }
@@ -384,7 +550,10 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
       const data = await res.json()
       if (res.ok) {
         setMessage({ type: 'success', text: `Learning job started for "${taxonomy.key}" (job ${data.jobId})` })
-        loadTaxonomies()
+        // Delay reload to avoid flashing - let the badge update first
+        setTimeout(() => {
+          loadTaxonomies()
+        }, 500)
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to start learning job' })
       }
@@ -502,110 +671,101 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                 </div>
               ) : (
                 activeTaxonomies.map(taxonomy => (
-                  <div key={taxonomy.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <span className="text-2xl">📚</span>
-                          <h2 className="text-xl font-semibold text-gray-900">{taxonomy.key}</h2>
+                  <div key={taxonomy.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                    {/* Header */}
+                    <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-4 flex-wrap">
+                            <h2 className="text-lg font-semibold text-gray-900">{taxonomy.key}</h2>
+                            <span className="text-sm text-gray-500">
+                              {(taxonomy.nodeCount ?? 0).toLocaleString()} nodes
+                            </span>
+                            <span className="text-sm text-gray-500">
+                              {taxonomy.actualMaxLevel ?? 0} levels
+                            </span>
+                            <span className="text-sm text-gray-500">
+                              Created {formatDate(taxonomy.createdAt)}
+                            </span>
+                          </div>
+                          {taxonomy.description && (
+                            <p className="text-sm text-gray-600 mt-1">{taxonomy.description}</p>
+                          )}
                         </div>
-                        <p className="text-gray-700 font-medium">{taxonomy.key}</p>
-                        {taxonomy.description && (
-                          <p className="text-sm text-gray-600 mt-2">{taxonomy.description}</p>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => openEditModal(taxonomy)}
-                          className="px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors font-medium"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => openDeleteModal(taxonomy)}
-                          className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
-                        >
-                          Delete
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => openEditModal(taxonomy)}
+                            className="px-3 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors font-medium"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => openDeleteModal(taxonomy)}
+                            className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-md transition-colors font-medium"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="border-t border-gray-200 pt-4 space-y-6">
-                      <h3 className="text-sm font-semibold text-gray-700 mb-3">📊 Statistics</h3>
-                      <div className="space-y-2">
-                        <p className="text-sm text-gray-600">
-                          <strong>{(taxonomy.nodeCount ?? 0).toLocaleString()}</strong> nodes across <strong>{taxonomy.actualMaxLevel ?? 0}</strong> levels
-                        </p>
-                        {taxonomy.levelCounts.map(lc => (
-                          <p key={lc.level} className="text-sm text-gray-600 pl-4">
-                            • Level {lc.level}: <strong>{lc.name}</strong> ({lc.count.toLocaleString()} nodes)
-                          </p>
-                        ))}
-                        <p className="text-xs text-gray-500 mt-2">
-                          Created: {formatDate(taxonomy.createdAt)}
-                        </p>
-                      </div>
-                      <div className="grid gap-4 mt-4 md:grid-cols-2">
-                        <div className="border border-gray-200 rounded-lg p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <div>
-                              <p className="text-sm font-semibold text-gray-700">AI Sync</p>
-                              <p className="text-xs text-gray-500">Sync taxonomy structure to AI</p>
-                            </div>
-                            {renderStatusBadge(taxonomy.lastAISyncStatus)}
-                          </div>
-                          <p className="text-xs text-gray-500">
-                            Last sync:{' '}
-                            {taxonomy.lastAISyncAt
-                              ? formatRelativeTime(taxonomy.lastAISyncAt)
-                              : 'Never'}
-                          </p>
-                          {taxonomy.lastAISyncError && (
-                            <p className="text-xs text-red-600 mt-1">{taxonomy.lastAISyncError}</p>
-                          )}
+                    {/* Content */}
+                    <div className="p-6">
+                      {/* AI Actions - Simplified */}
+                      <div className="flex gap-4 flex-wrap">
+                        {/* AI Sync */}
+                        <div className="flex flex-col">
                           <button
                             onClick={() => handleSyncAI(taxonomy)}
                             disabled={isSyncing(taxonomy.key)}
-                            className="mt-3 w-full px-3 py-2 text-sm font-medium rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-4 py-2.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
                           >
-                            {isSyncing(taxonomy.key) ? 'Syncing…' : 'Sync with AI'}
+                            {isSyncing(taxonomy.key) ? 'Syncing…' : 'Sync taxonomy with AI'}
                           </button>
+                          <div className="mt-2 text-center">
+                            {renderStatusBadge(taxonomy.lastAISyncStatus)}
+                            <p className="text-xs text-gray-500 mt-1">
+                              {taxonomy.lastAISyncAt ? formatRelativeTime(taxonomy.lastAISyncAt) : 'Never synced'}
+                            </p>
+                          </div>
                         </div>
 
-                        <div className="border border-gray-200 rounded-lg p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <div>
-                              <p className="text-sm font-semibold text-gray-700">AI Learning</p>
-                              <p className="text-xs text-gray-500">Send accepted labels for training</p>
-                            </div>
-                            {renderStatusBadge(taxonomy.lastLearningStatus)}
-                          </div>
-                          <p className="text-xs text-gray-500">
-                            Last learning:{' '}
-                            {taxonomy.lastLearningAt
-                              ? formatRelativeTime(taxonomy.lastLearningAt)
-                              : 'Never'}
-                          </p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            New annotations:{' '}
-                            <strong>{(taxonomy.newAnnotationsSinceLastLearning ?? 0).toLocaleString()}</strong> /{' '}
-                            {learningThreshold.toLocaleString()}
-                          </p>
-                          {taxonomy.lastLearningError && (
-                            <p className="text-xs text-red-600 mt-1">{taxonomy.lastLearningError}</p>
-                          )}
+                        {/* AI Learning */}
+                        <div className="flex flex-col">
                           <button
                             onClick={() => handleLearning(taxonomy)}
                             disabled={
                               isLearning(taxonomy.key) ||
                               taxonomy.newAnnotationsSinceLastLearning < learningThreshold
                             }
-                            className="mt-3 w-full px-3 py-2 text-sm font-medium rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-4 py-2.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
                           >
-                            {isLearning(taxonomy.key)
-                              ? 'Sending…'
-                              : 'Send for Learning'}
+                            {isLearning(taxonomy.key) ? 'Sending…' : 'Train AI with submitted labels'}
                           </button>
+                          <div className="mt-2 text-center">
+                            {renderStatusBadge(taxonomy.lastLearningStatus)}
+                            <p className="text-xs text-gray-500 mt-1">
+                              {taxonomy.lastLearningAt ? formatRelativeTime(taxonomy.lastLearningAt) : 'Never trained'}
+                              {' '}
+                              <strong>{(taxonomy.newAnnotationsSinceLastLearning ?? 0).toLocaleString()}</strong> / {learningThreshold.toLocaleString()} new annotations
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* External Training */}
+                        <div className="flex flex-col">
+                          <button
+                            onClick={() => openExternalTrainingModal(taxonomy)}
+                            disabled={isTraining(taxonomy.key)}
+                            className="px-4 py-2.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                          >
+                            {isTraining(taxonomy.key) ? 'Processing…' : 'Upload external training data'}
+                          </button>
+                          <div className="mt-2 text-center">
+                            <p className="text-xs text-gray-500 mt-1">
+                              {taxonomy.lastExternalTrainingAt ? formatRelativeTime(taxonomy.lastExternalTrainingAt) : 'Never trained'}
+                            </p>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1010,6 +1170,171 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                 className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {submitting ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* External Training Modal */}
+      {externalTrainingModalOpen && selectedTaxonomyForTraining && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-gray-900">External Training: {selectedTaxonomyForTraining.key}</h2>
+              <button
+                onClick={() => {
+                  setExternalTrainingModalOpen(false)
+                  setTrainingFile(null)
+                  setTrainingValidationResult(null)
+                  setTrainingUploadResult(null)
+                }}
+                className="text-gray-500 hover:text-gray-700 text-2xl"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Training Data CSV File *
+                </label>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 relative">
+                    <input
+                      type="file"
+                      accept=".csv"
+                      onChange={(e) => {
+                        const newFile = e.target.files?.[0] || null
+                        setTrainingFile(newFile)
+                        if (newFile !== trainingFile) {
+                          setTrainingValidationResult(null)
+                          setTrainingUploadResult(null)
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      id="training-file-input"
+                    />
+                    <div className="flex items-center gap-3 px-4 py-2.5 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 transition-colors">
+                      <span className="text-sm text-gray-500 truncate flex-1">
+                        {trainingFile ? trainingFile.name : 'No file chosen'}
+                      </span>
+                    </div>
+                  </div>
+                  <label
+                    htmlFor="training-file-input"
+                    className="px-6 py-2.5 bg-indigo-50 text-indigo-700 font-medium rounded-lg hover:bg-indigo-100 transition-colors cursor-pointer whitespace-nowrap border border-indigo-200"
+                  >
+                    Choose file...
+                  </label>
+                  {trainingFile && (
+                    <button
+                      onClick={validateTrainingFile}
+                      disabled={validatingTraining}
+                      className="px-6 py-2.5 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                    >
+                      {validatingTraining ? 'Validating...' : 'Validate File'}
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  ℹ️ Required: at least one field_* column (matching existing sentence fields) and taxonomy level columns (e.g., {selectedTaxonomyForTraining.key.toUpperCase()}_1, {selectedTaxonomyForTraining.key.toUpperCase()}_2)
+                </p>
+                
+                {/* Validation Results */}
+                {trainingValidationResult && (
+                  <div className={`mt-3 p-4 rounded-lg text-sm ${
+                    trainingValidationResult.ok
+                      ? 'bg-green-50 text-green-800 border border-green-200'
+                      : 'bg-red-50 text-red-800 border border-red-200'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      <span className="text-lg flex-shrink-0">
+                        {trainingValidationResult.ok ? '✅' : '⚠️'}
+                      </span>
+                      <div className="flex-1">
+                        <p className="font-medium mb-1">
+                          {trainingValidationResult.ok ? 'Validation Passed' : 'Validation Failed'}
+                        </p>
+                        {trainingValidationResult.ok ? (
+                          <p>{trainingValidationResult.message || `File is valid! Found ${trainingValidationResult.recordCount || 0} records.`}</p>
+                        ) : (
+                          <div className="break-words whitespace-pre-wrap text-sm max-h-60 overflow-y-auto">
+                            {trainingValidationResult.error && (
+                              <p className="mb-2">{trainingValidationResult.error}</p>
+                            )}
+                            {trainingValidationResult.errors && trainingValidationResult.errors.length > 0 && (
+                              <div className="mt-2">
+                                <p className="font-medium mb-1">Errors:</p>
+                                <ul className="list-disc list-inside space-y-1">
+                                  {trainingValidationResult.errors.slice(0, 20).map((err, idx) => (
+                                    <li key={idx}>Row {err.row}: {err.message}</li>
+                                  ))}
+                                  {trainingValidationResult.errors.length > 20 && (
+                                    <li className="text-gray-600">... and {trainingValidationResult.errors.length - 20} more errors</li>
+                                  )}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Upload Results */}
+                {trainingUploadResult && (
+                  <div className={`mt-3 p-4 rounded-lg text-sm ${
+                    trainingUploadResult.ok
+                      ? 'bg-green-50 text-green-800 border border-green-200'
+                      : 'bg-red-50 text-red-800 border border-red-200'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      <span className="text-lg flex-shrink-0">
+                        {trainingUploadResult.ok ? '✅' : '⚠️'}
+                      </span>
+                      <div className="flex-1">
+                        <p className="font-medium mb-1">
+                          {trainingUploadResult.ok ? 'Training Job Started' : 'Upload Failed'}
+                        </p>
+                        {trainingUploadResult.ok ? (
+                          <p>Training job started successfully with {trainingUploadResult.recordCount} records. The job will be processed in the queue.</p>
+                        ) : (
+                          <p>{trainingUploadResult.error}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setExternalTrainingModalOpen(false)
+                  setTrainingFile(null)
+                  setTrainingValidationResult(null)
+                  setTrainingUploadResult(null)
+                }}
+                disabled={uploadingTraining}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={uploadAndStartTraining}
+                disabled={
+                  uploadingTraining || 
+                  !trainingFile || 
+                  !trainingValidationResult?.ok ||
+                  !!trainingUploadResult?.ok
+                }
+                className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {uploadingTraining ? 'Starting...' : 'Start Training'}
               </button>
             </div>
           </div>

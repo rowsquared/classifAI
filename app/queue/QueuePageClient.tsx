@@ -424,9 +424,14 @@ export default function QueuePageClient({
   const someSelected = selectedIds.size > 0
   const isAdmin = currentUser?.role === 'admin'
   const activeTaxonomies = taxonomies.filter(t => t.isActive !== false)
-  const syncedTaxonomies = activeTaxonomies.filter(t => t.lastAISyncStatus === 'success')
-  // Show all taxonomies that are not successfully synced (any status other than 'success')
-  const unsyncedTaxonomies = activeTaxonomies.filter(t => t.lastAISyncStatus !== 'success')
+  // A taxonomy is considered synced if it has status 'completed' or 'success' (for backward compatibility)
+  const syncedTaxonomies = activeTaxonomies.filter(t => 
+    t.lastAISyncStatus === 'completed' || t.lastAISyncStatus === 'success'
+  )
+  // Show all taxonomies that are not successfully synced (any status other than 'completed' or 'success')
+  const unsyncedTaxonomies = activeTaxonomies.filter(t => 
+    t.lastAISyncStatus !== 'completed' && t.lastAISyncStatus !== 'success'
+  )
 
   const waitForAIJobCompletion = async (jobId: string, taxonomyLabel: string) => {
     const maxAttempts = 200 // ~10 minutes at 3s interval
@@ -464,8 +469,10 @@ export default function QueuePageClient({
       return
     }
 
-    // Check all taxonomies that are not successfully synced (any status other than 'success')
-    const unsyncedTaxonomies = activeTaxonomies.filter(t => t.lastAISyncStatus !== 'success')
+    // Check all taxonomies that are not successfully synced (any status other than 'completed' or 'success')
+    const unsyncedTaxonomies = activeTaxonomies.filter(t => 
+      t.lastAISyncStatus !== 'completed' && t.lastAISyncStatus !== 'success'
+    )
     if (unsyncedTaxonomies.length > 0) {
       const names = unsyncedTaxonomies.map(t => t.key).join(', ')
       addToast('error', `Sync required before sending to AI: ${names}`)

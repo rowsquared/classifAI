@@ -36,6 +36,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Verify the user exists in the database
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { id: true }
+    })
+
+    if (!user) {
+      console.error(`User ${session.user.id} from session not found in database`)
+      return NextResponse.json({ 
+        error: 'User account not found. Please log out and log back in.' 
+      }, { status: 401 })
+    }
+
     const body = await req.json()
     const input = startSchema.parse(body)
 
@@ -77,6 +90,8 @@ export async function POST(req: NextRequest) {
         createdBy: { select: { id: true, name: true, email: true } }
       }
     })
+
+    console.log(`✅ Created AI labeling job: ${job.id} for taxonomy ${taxonomy.key} with ${sentenceIds.length} sentences`)
 
     triggerAILabelingProcessor()
 

@@ -220,6 +220,10 @@ export async function POST(req: NextRequest) {
     // Commit import
     let importId: string
     
+    // Calculate timeout: 1 minute per 10k rows, minimum 30 seconds, maximum 30 minutes
+    const estimatedSeconds = Math.max(30, Math.min(1800, Math.ceil(sentences.length / 10000) * 60))
+    const timeoutMs = estimatedSeconds * 1000
+    
     await prisma.$transaction(async (tx) => {
       // Create import record
       const sentenceImport = await tx.sentenceImport.create({
@@ -259,6 +263,9 @@ export async function POST(req: NextRequest) {
         // Log progress
         const progress = Math.round(((i + chunk.length) / sentences.length) * 100)
       }
+    }, {
+      maxWait: timeoutMs, // Maximum time to wait for a transaction slot
+      timeout: timeoutMs  // Maximum time the transaction can run
     })
 
     return NextResponse.json({ 

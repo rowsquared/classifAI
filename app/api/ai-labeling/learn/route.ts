@@ -43,6 +43,27 @@ export async function POST(req: NextRequest) {
       }, { status: 400 })
     }
 
+    // Check if any AI job is currently running (unified queue)
+    const { hasActiveAIJob } = await import('@/lib/ai-job-queue')
+    const hasActive = await hasActiveAIJob()
+    
+    if (hasActive) {
+      // Update taxonomy status to pending - job will be queued
+      await prisma.taxonomy.update({
+        where: { id: taxonomy.id },
+        data: {
+          lastLearningStatus: 'pending',
+          lastLearningError: null
+        }
+      })
+      return NextResponse.json({
+        ok: true,
+        jobId: 'queued',
+        message: 'Job queued. It will start when the current job completes.',
+        sentences: 0
+      })
+    }
+
     const annotationsWhere: any = {
       taxonomyId: taxonomy.id,
       source: 'user' as const
@@ -110,21 +131,51 @@ export async function POST(req: NextRequest) {
     }
 
     const sentencesPayload = Array.from(sentencesMap.values())
-    const jobId = await startAIJob('/learn', {
-      taxonomyKey: taxonomy.key,
-      sentences: sentencesPayload
-    })
+    let jobId: string
+    try {
+      jobId = await startAIJob('/learn', {
+        taxonomyKey: taxonomy.key,
+        sentences: sentencesPayload
+      })
+    } catch (error: any) {
+      // If startAIJob fails (e.g., validation error), record it as failed
+      const errorMessage = error?.message || 'Failed to start AI learning job'
+      await prisma.taxonomy.update({
+        where: { id: taxonomy.id },
+        data: {
+          lastLearningJobId: `failed-${Date.now()}`, // Temporary ID for tracking
+          lastLearningStatus: 'failed',
+          lastLearningError: errorMessage
+        }
+      })
+      throw error // Re-throw to be caught by outer catch block
+    }
 
+    // Job started successfully, set status to processing
     await prisma.taxonomy.update({
       where: { id: taxonomy.id },
       data: {
         lastLearningJobId: jobId,
-        lastLearningStatus: 'pending',
+        lastLearningStatus: 'processing',
         lastLearningError: null
       }
     })
 
     monitorAIJob(jobId, `/learn/${jobId}/status`, async (result) => {
+      // Process next queued job after completion
+      const { processNextQueuedJob } = await import('@/lib/ai-job-queue')
+      await processNextQueuedJob()
+      
+      // Check if job was cancelled
+      const currentTaxonomy = await prisma.taxonomy.findUnique({
+        where: { id: taxonomy.id },
+        select: { lastLearningStatus: true }
+      })
+      
+      if (currentTaxonomy?.lastLearningStatus === 'cancelled') {
+        return // Job was cancelled, don't update status
+      }
+      
       if (result.success) {
         await prisma.taxonomy.update({
           where: { id: taxonomy.id },

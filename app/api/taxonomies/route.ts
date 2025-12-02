@@ -54,12 +54,35 @@ export async function GET(req: NextRequest) {
             : `Level ${lc.level}`
         }))
 
+        // Get last external training date
+        let lastExternalTrainingAt: string | null = null
+        try {
+          // Use type assertion since Prisma client might not be fully updated
+          const prismaClient = prisma as any
+          if (prismaClient.aIExternalTrainingJob) {
+            const lastExternalTraining = await prismaClient.aIExternalTrainingJob.findFirst({
+              where: {
+                taxonomyId: taxonomy.id,
+                status: 'completed'
+              },
+              orderBy: { completedAt: 'desc' },
+              select: { completedAt: true }
+            })
+            if (lastExternalTraining?.completedAt) {
+              lastExternalTrainingAt = lastExternalTraining.completedAt.toISOString()
+            }
+          }
+        } catch (error) {
+          // Table might not exist yet, ignore
+        }
+
         return {
           ...taxonomy,
           nodeCount: taxonomy._count.nodes,
           annotationCount: taxonomy._count.annotations,
           actualMaxLevel: maxLevelNode?.level || 0,
           levelCounts,
+          lastExternalTrainingAt,
           _count: undefined
         }
       })

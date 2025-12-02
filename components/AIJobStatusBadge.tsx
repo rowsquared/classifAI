@@ -1,19 +1,25 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useSession } from 'next-auth/react'
 import { Loader2, CheckCircle2, XCircle, Clock, X } from 'lucide-react'
 import Link from 'next/link'
 
 type AIJob = {
   id: string
+  type: 'labeling' | 'learning' | 'taxonomy_sync' | 'external_training'
   status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
-  totalSentences: number
-  processedSentences: number
-  failedSentences: number
+  taxonomy: string
+  totalSentences?: number
+  processedSentences?: number
+  failedSentences?: number
+  recordCount?: number
+  fileName?: string
   startedAt: string
-  taxonomy: {
-    key: string
+  createdBy?: {
+    id: string
+    name: string | null
+    email: string
   }
 }
 
@@ -34,6 +40,7 @@ export default function AIJobStatusBadge() {
   const { data: session } = useSession()
   const [activeJobs, setActiveJobs] = useState<AIJob[]>([])
   const [queuedJobs, setQueuedJobs] = useState<QueuedJob[]>([])
+  const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [loading, setLoading] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -59,60 +66,130 @@ export default function AIJobStatusBadge() {
       const sessionId = sessionStorage.getItem('currentAISessionId')
       const sessionJobs = JSON.parse(sessionStorage.getItem('aiSessionJobs') || '[]')
       if (sessionId) {
-        setCurrentSessionId(sessionId)
+        // Only update if session ID actually changed
+        setCurrentSessionId(prev => prev === sessionId ? prev : sessionId)
         const jobIds = new Set(sessionJobs
           .filter((sj: any) => sj.sessionId === sessionId)
           .map((sj: any) => sj.jobId))
-        setSessionJobIds(jobIds)
+        // Only update if job IDs actually changed
+        setSessionJobIds(prev => {
+          const prevArray = Array.from(prev).sort()
+          const newArray = Array.from(jobIds).sort()
+          if (prevArray.length !== newArray.length) return jobIds
+          if (prevArray.some((id, i) => id !== newArray[i])) return jobIds
+          return prev // No change, return previous to avoid re-render
+        })
       } else {
-        // If no session ID in storage, clear state
-        setCurrentSessionId(null)
-        setSessionJobIds(new Set())
-        // Also clear jobs if no session
-        setActiveJobs([])
-        setQueuedJobs([])
+        // If no session ID in storage, clear session-related state only
+        // Don't clear activeJobs/queuedJobs here - they may contain non-session jobs (taxonomy sync, etc.)
+        // Only update if state actually changed
+        setCurrentSessionId(prev => prev === null ? prev : null)
+        setSessionJobIds(prev => {
+          if (prev.size === 0) return prev // Already empty, no change
+          return new Set()
+        })
+        // Only clear queued jobs (these are session-specific)
+        setQueuedJobs(prev => {
+          // Only clear if they were session-based queued jobs
+          const hasSessionQueued = prev.some(job => 'isQueued' in job && job.isQueued)
+          return hasSessionQueued ? [] : prev
+        })
       }
     }
 
     updateSessionTracking()
     // Also update when storage changes (e.g., when new jobs are added)
-    const interval = setInterval(updateSessionTracking, 1000)
+    // Increase interval to reduce flashing - check every 2 seconds instead of 1
+    const interval = setInterval(updateSessionTracking, 2000)
     return () => clearInterval(interval)
   }, [])
 
-  // Poll for active jobs and check queue status (only if admin)
+  // Poll for active jobs across all types (only if admin)
   useEffect(() => {
     if (!isAdmin) return
 
     const fetchActiveJobs = async () => {
       try {
-        setLoading(true)
-        // Fetch jobs that belong to current session
+        // Only set loading on the very first load to avoid flashing
+        if (isInitialLoad) {
+          setLoading(true)
+        }
+        
+        // Fetch all active jobs from the unified endpoint
+        const res = await fetch('/api/ai-jobs/active')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.ok && data.jobs) {
+            // Filter to only show active jobs (pending/processing)
+            const active = data.jobs.filter((job: AIJob) => 
+              job.status === 'pending' || job.status === 'processing'
+            )
+            // Only update if there's a meaningful change to avoid unnecessary re-renders
+            setActiveJobs(prev => {
+              // Check if the job list actually changed
+              const prevIds = new Set(prev.map(j => j.id))
+              const newIds = new Set(active.map(j => j.id))
+              const idsChanged = prevIds.size !== newIds.size || 
+                [...prevIds].some(id => !newIds.has(id)) ||
+                [...newIds].some(id => !prevIds.has(id))
+              
+              // Also check if any job status changed
+              const statusChanged = prev.some(pJob => {
+                const nJob = active.find(a => a.id === pJob.id)
+                return nJob && nJob.status !== pJob.status
+              })
+              
+              // Only update if something actually changed
+              if (idsChanged || statusChanged) {
+                return active
+              }
+              return prev // Return previous to avoid re-render
+            })
+          } else {
+            // Only clear if we had jobs before
+            setActiveJobs(prev => prev.length > 0 ? [] : prev)
+          }
+        } else {
+          // Only clear if we had jobs before
+          setActiveJobs(prev => prev.length > 0 ? [] : prev)
+        }
+        
+        // Also check for session-based queued jobs (for labeling from queue page)
         const sessionJobIdsArray = Array.from(sessionJobIds)
         if (sessionJobIdsArray.length > 0) {
-          // Fetch specific jobs by ID if we have session job IDs
+          // Fetch specific labeling jobs by ID for session tracking
           const jobsPromises = sessionJobIdsArray.map(jobId => 
             fetch(`/api/ai-labeling/jobs/${jobId}`).then(res => res.ok ? res.json() : null).catch(() => null)
           )
           const jobResults = await Promise.all(jobsPromises)
           const sessionJobs = jobResults
             .filter(result => result?.ok && result.job)
-            .map(result => result.job)
+            .map(result => ({
+              ...result.job,
+              type: 'labeling' as const,
+              taxonomy: result.job.taxonomy.key
+            }))
             .filter((job: AIJob) => 
               job.status === 'pending' || 
-              job.status === 'processing' || 
-              job.status === 'completed' || 
-              job.status === 'failed'
+              job.status === 'processing'
             )
-          setActiveJobs(sessionJobs)
-        } else {
-          // No session jobs yet, don't show anything
-          setActiveJobs([])
+          // Merge session jobs with active jobs (avoid duplicates)
+          setActiveJobs(prev => {
+            const existingIds = new Set(prev.map(j => j.id))
+            const newSessionJobs = sessionJobs.filter((j: AIJob) => !existingIds.has(j.id))
+            if (newSessionJobs.length === 0) {
+              return prev // No new jobs, return previous to avoid re-render
+            }
+            return [...prev, ...newSessionJobs]
+          })
         }
       } catch (error) {
         console.error('Failed to fetch active jobs:', error)
       } finally {
-        setLoading(false)
+        if (isInitialLoad) {
+          setLoading(false)
+          setIsInitialLoad(false)
+        }
       }
     }
 
@@ -135,16 +212,27 @@ export default function AIJobStatusBadge() {
               taxonomy: { key: taxonomyKey },
               isQueued: true
             }))
-            setQueuedJobs(queued)
+            // Only update if the queue actually changed
+            setQueuedJobs(prev => {
+              const prevKeys = new Set(prev.filter(j => 'isQueued' in j && j.isQueued).map(j => j.taxonomy.key))
+              const newKeys = new Set(queued.map(j => j.taxonomy.key))
+              const changed = prevKeys.size !== newKeys.size || 
+                [...prevKeys].some(k => !newKeys.has(k)) ||
+                [...newKeys].some(k => !prevKeys.has(k))
+              return changed ? queued : prev
+            })
           } else {
-            setQueuedJobs([])
+            // Only clear session-based queued jobs
+            setQueuedJobs(prev => prev.filter(j => !('isQueued' in j && j.isQueued)))
           }
         } else {
-          setQueuedJobs([])
+          // Only clear session-based queued jobs
+          setQueuedJobs(prev => prev.filter(j => !('isQueued' in j && j.isQueued)))
         }
       } catch (error) {
         console.error('Failed to read queue status:', error)
-        setQueuedJobs([])
+        // Only clear session-based queued jobs on error
+        setQueuedJobs(prev => prev.filter(j => !('isQueued' in j && j.isQueued)))
       }
     }
 
@@ -153,7 +241,7 @@ export default function AIJobStatusBadge() {
     const interval = setInterval(() => {
       fetchActiveJobs()
       updateQueuedJobs()
-    }, 2000) // Poll every 2 seconds for faster updates
+    }, 3000) // Poll every 3 seconds
 
     return () => clearInterval(interval)
   }, [isAdmin, sessionJobIds])
@@ -172,127 +260,66 @@ export default function AIJobStatusBadge() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showDropdown])
 
-  // Filter jobs to only show those from current session (calculate before early return)
-  const sessionJobs = activeJobs.filter(job => sessionJobIds.has(job.id))
-  const sessionQueuedJobs = queuedJobs.filter(job => {
-    // Check if this queued job belongs to current session
-    const queueStatusStr = sessionStorage.getItem('aiQueueStatus')
-    if (queueStatusStr) {
-      const queueStatus = JSON.parse(queueStatusStr) as { sessionId?: string }
-      return queueStatus.sessionId === currentSessionId
-    }
-    return false
-  })
-
-  // Get total job count from session jobs (stored when jobs are created)
-  // This is more reliable than queue status which might be cleared
-  const getTotalJobCount = () => {
-    try {
-      // Get the count from session jobs - this is the source of truth
-      const sessionJobsData = JSON.parse(sessionStorage.getItem('aiSessionJobs') || '[]')
-      const sessionJobCount = sessionJobsData.filter((sj: any) => sj.sessionId === currentSessionId).length
-      
-      // Also check queue status for queued jobs not yet created
+  // Also include session-based queued jobs (for labeling from queue page)
+  // Memoize to prevent unnecessary re-renders
+  const sessionQueuedJobs = useMemo(() => {
+    return queuedJobs.filter(job => {
       const queueStatusStr = sessionStorage.getItem('aiQueueStatus')
       if (queueStatusStr && currentSessionId) {
-        const queueStatus = JSON.parse(queueStatusStr) as { current: string | null; remaining: string[]; sessionId?: string }
-        if (queueStatus.sessionId === currentSessionId) {
-          // Count: session jobs (already created) + remaining (not yet created)
-          return sessionJobCount + queueStatus.remaining.length
-        }
+        const queueStatus = JSON.parse(queueStatusStr) as { sessionId?: string }
+        return queueStatus.sessionId === currentSessionId
       }
-      
-      // Fallback: use session job count or actual jobs count
-      return sessionJobCount > 0 ? sessionJobCount : (sessionJobs.length + sessionQueuedJobs.length)
-    } catch {
-      return sessionJobs.length + sessionQueuedJobs.length
-    }
-  }
+      return false
+    })
+  }, [queuedJobs, currentSessionId])
 
-  // Combine session jobs and queued jobs for display
-  const allJobs = [...sessionJobs, ...sessionQueuedJobs] as (AIJob | QueuedJob)[]
-  // Count total jobs in session (for button display) - use queue status for accurate count
-  const totalJobCount = getTotalJobCount()
-  // Count active jobs (processing, pending, or queued) - for determining when all are done
-  const activeCount = allJobs.filter(job => 
-    job.status === 'pending' || 
-    job.status === 'processing' || 
-    ('isQueued' in job && job.isQueued)
-  ).length
+  // Combine all active jobs and queued jobs for display
+  // Memoize to prevent unnecessary re-renders
+  const allJobs = useMemo(() => {
+    if (!activeJobs || !sessionQueuedJobs) {
+      return []
+    }
+    return [...activeJobs, ...sessionQueuedJobs] as (AIJob | QueuedJob)[]
+  }, [activeJobs, sessionQueuedJobs])
   
-  // Check if all jobs are completed - need to check queue status, not just jobs
-  // The queue status is the source of truth because jobs are created sequentially
-  const checkAllCompleted = () => {
-    if (!currentSessionId) return false
+  // Count total active jobs - memoize to prevent recalculation
+  const totalJobCount = useMemo(() => allJobs.length, [allJobs])
+  const activeCount = useMemo(() => {
+    return allJobs.filter(job => 
+      job.status === 'pending' || 
+      job.status === 'processing' || 
+      ('isQueued' in job && job.isQueued)
+    ).length
+  }, [allJobs])
+  
+  // Check if all jobs are completed - memoize to prevent recalculation
+  const allCompleted = useMemo(() => {
+    // If there are any active jobs, we're not done
+    if (activeCount > 0) {
+      return false
+    }
     
-    try {
-      const queueStatusStr = sessionStorage.getItem('aiQueueStatus')
-      if (queueStatusStr) {
-        const queueStatus = JSON.parse(queueStatusStr) as { current: string | null; remaining: string[]; sessionId?: string }
-        if (queueStatus.sessionId === currentSessionId) {
-          // All jobs are done when:
-          // 1. No remaining jobs in queue (remaining.length === 0)
-          // 2. No current job (current === null) OR current job is completed
-          // 3. All actual jobs we know about are completed
-          
-          const hasRemainingJobs = queueStatus.remaining.length > 0
-          const hasCurrentJob = queueStatus.current !== null
-          
-          // If there are remaining jobs, we're not done
-          if (hasRemainingJobs) {
-            return false
-          }
-          
-          // If there's a current job, check if it's completed
-          if (hasCurrentJob) {
-            // Check if the current job is in our completed jobs
-            const currentJobCompleted = sessionJobs.some(job => 
-              job.taxonomy.key === queueStatus.current &&
-              (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled')
-            )
-            if (!currentJobCompleted) {
+    // Also check session queue status for labeling jobs
+    if (currentSessionId) {
+      try {
+        const queueStatusStr = sessionStorage.getItem('aiQueueStatus')
+        if (queueStatusStr) {
+          const queueStatus = JSON.parse(queueStatusStr) as { current: string | null; remaining: string[]; sessionId?: string }
+          if (queueStatus.sessionId === currentSessionId) {
+            // If there are remaining jobs in queue, we're not done
+            if (queueStatus.remaining.length > 0 || queueStatus.current !== null) {
               return false
             }
           }
-          
-          // All jobs in allJobs should be completed (no pending/processing/queued)
-          const allJobsCompleted = allJobs.length > 0 && allJobs.every(job => 
-            job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
-          )
-          
-          // Only return true if no remaining jobs AND all known jobs are completed
-          return !hasRemainingJobs && allJobsCompleted
         }
+      } catch (error) {
+        console.error('Error checking completion status:', error)
       }
-    } catch (error) {
-      console.error('Error checking completion status:', error)
     }
     
-    // Fallback: if queue status doesn't exist, check session jobs from storage
-    // This handles the case where queue status was cleared but jobs are still running
-    try {
-      const sessionJobsData = JSON.parse(sessionStorage.getItem('aiSessionJobs') || '[]')
-      const sessionJobEntries = sessionJobsData.filter((sj: any) => sj.sessionId === currentSessionId)
-      const expectedJobCount = sessionJobEntries.length
-      
-      if (expectedJobCount > 0) {
-        // All session jobs must be completed AND we must have all expected jobs
-        const allJobsCompleted = sessionJobs.every(job => 
-          job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
-        )
-        // Only return true if we have all expected jobs completed
-        // This prevents premature completion when only some jobs are done
-        return allJobsCompleted && sessionJobs.length >= expectedJobCount
-      }
-    } catch {
-      // If we can't check, be conservative and return false
-    }
-    
-    // Final fallback: be conservative - if we can't verify, assume not done
-    return false
-  }
-  
-  const allCompleted = checkAllCompleted()
+    // All jobs are done if no active jobs
+    return activeCount === 0 && allJobs.length === 0
+  }, [activeCount, currentSessionId, allJobs.length])
 
   // Auto-close popup when all jobs in session are completed (must be before early return)
   useEffect(() => {
@@ -329,13 +356,28 @@ export default function AIJobStatusBadge() {
     }
   }, [currentSessionId, allCompleted])
 
+  // Sort jobs by start time to maintain original order (oldest first)
+  // This keeps jobs in the same position as they progress
+  // Memoize to prevent unnecessary re-sorting
+  // MUST be before any early returns to follow Rules of Hooks
+  const sortedJobs = useMemo(() => {
+    if (!allJobs || allJobs.length === 0) {
+      return []
+    }
+    return [...allJobs].sort((a, b) => {
+      const timeA = new Date(a.startedAt).getTime()
+      const timeB = new Date(b.startedAt).getTime()
+      return timeA - timeB
+    })
+  }, [allJobs])
+
   // Only show for admin users (early return after all hooks)
   if (!isAdmin) {
     return null
   }
 
-  // Hide badge if no current session (all jobs done and cleaned up)
-  if (!currentSessionId) {
+  // Hide badge if no jobs at all (0 total jobs)
+  if (totalJobCount === 0) {
     return null
   }
 
@@ -352,51 +394,92 @@ export default function AIJobStatusBadge() {
     }
   }
 
-  const getProgress = (job: AIJob) => {
-    if (job.totalSentences === 0) return 0
-    return Math.round((job.processedSentences / job.totalSentences) * 100)
+  const getProgress = (job: AIJob | QueuedJob) => {
+    if ('isQueued' in job && job.isQueued) {
+      return 0
+    }
+    if (job.type === 'external_training' || job.type === 'learning' || job.type === 'taxonomy_sync') {
+      // These jobs don't have progress tracking, show as indeterminate
+      return job.status === 'processing' ? 50 : 0
+    }
+    if (!job.totalSentences || job.totalSentences === 0) return 0
+    return Math.round((job.processedSentences || 0) / job.totalSentences * 100)
   }
 
-  const handleCancelJob = async (jobId: string, taxonomyKey: string, isQueued: boolean = false) => {
+  const getJobTypeLabel = (job: AIJob | QueuedJob) => {
+    if ('isQueued' in job && job.isQueued) {
+      return 'Labeling'
+    }
+    if ('type' in job) {
+      switch (job.type) {
+        case 'labeling':
+          return 'Labeling'
+        case 'learning':
+          return 'Learning'
+        case 'taxonomy_sync':
+          return 'Taxonomy Sync'
+        case 'external_training':
+          return 'External Training'
+        default:
+          return 'AI Job'
+      }
+    }
+    return 'AI Job'
+  }
+
+  const getTaxonomyKey = (job: AIJob | QueuedJob): string => {
+    if (typeof job.taxonomy === 'string') {
+      return job.taxonomy
+    }
+    return job.taxonomy.key
+  }
+
+  const handleCancelJob = async (job: AIJob | QueuedJob) => {
     try {
-      if (isQueued) {
+      if ('isQueued' in job && job.isQueued) {
         // For queued jobs, update the sessionStorage to remove from queue
         const queueStatusStr = sessionStorage.getItem('aiQueueStatus')
         if (queueStatusStr) {
           const queueStatus = JSON.parse(queueStatusStr) as { current: string | null; remaining: string[] }
-          const updatedRemaining = queueStatus.remaining.filter(key => key !== taxonomyKey)
+          const updatedRemaining = queueStatus.remaining.filter(key => key !== job.taxonomy)
           const updatedStatus = {
             ...queueStatus,
             remaining: updatedRemaining
           }
           sessionStorage.setItem('aiQueueStatus', JSON.stringify(updatedStatus))
-          setQueuedJobs(prev => prev.filter(job => job.taxonomy.key !== taxonomyKey))
+          setQueuedJobs(prev => prev.filter(j => j.taxonomy.key !== job.taxonomy))
         }
       } else {
-        // For actual jobs, cancel via API
-        const res = await fetch(`/api/ai-labeling/jobs/${jobId}/cancel`, {
-          method: 'POST'
+        // For actual jobs, cancel via unified API endpoint
+        if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+          return // Can't cancel completed/failed/cancelled jobs
+        }
+        
+        const res = await fetch(`/api/ai-jobs/${job.id}/cancel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: job.type })
         })
+        
         if (!res.ok) {
           const data = await res.json()
           throw new Error(data.error || 'Failed to cancel job')
         }
-        // Remove the cancelled job from the list
-        setActiveJobs(prev => prev.filter(job => job.id !== jobId))
+        
+        // Refresh jobs list
+        const activeRes = await fetch('/api/ai-jobs/active')
+        if (activeRes.ok) {
+          const activeData = await activeRes.json()
+          if (activeData.ok) {
+            setActiveJobs(activeData.jobs || [])
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to cancel AI job:', error)
       alert(error instanceof Error ? error.message : 'Failed to cancel job')
     }
   }
-
-  // Sort jobs by start time to maintain original order (oldest first)
-  // This keeps jobs in the same position as they progress
-  const sortedJobs = allJobs.sort((a, b) => {
-    const timeA = new Date(a.startedAt).getTime()
-    const timeB = new Date(b.startedAt).getTime()
-    return timeA - timeB
-  })
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -448,16 +531,20 @@ export default function AIJobStatusBadge() {
                           <div className="flex items-center gap-2 mb-1">
                             {getStatusIcon(job.status)}
                             <span className="font-medium text-sm text-gray-900 truncate">
-                              {job.taxonomy.key}
+                              {getJobTypeLabel(job)}: {getTaxonomyKey(job)}
                             </span>
                           </div>
                           <div className={`text-xs ${isCompleted ? 'text-gray-500' : 'text-gray-600'}`}>
                             {isQueued ? (
                               `${job.totalSentences || 0} sentences queued`
+                            ) : ('type' in job && job.type === 'external_training') ? (
+                              `${job.recordCount || 0} records${job.fileName ? ` (${job.fileName})` : ''}`
+                            ) : ('type' in job && (job.type === 'learning' || job.type === 'taxonomy_sync')) ? (
+                              'Processing...'
                             ) : (
                               <>
-                                {job.processedSentences} / {job.totalSentences} sentences
-                                {job.failedSentences > 0 && (
+                                {job.processedSentences || 0} / {job.totalSentences || 0} sentences
+                                {(job.failedSentences || 0) > 0 && (
                                   <span className="text-red-600 ml-1">
                                     ({job.failedSentences} failed)
                                   </span>
@@ -477,9 +564,9 @@ export default function AIJobStatusBadge() {
                               {job.status === 'completed' ? 'Done' : 'Failed'}
                             </span>
                           )}
-                          {!isCompleted && (job.status === 'pending' || isQueued) && (
+                          {!isCompleted && (job.status === 'pending' || isQueued) && ('type' in job ? job.type === 'labeling' : true) && (
                             <button
-                              onClick={() => handleCancelJob(job.id, job.taxonomy.key, isQueued)}
+                              onClick={() => handleCancelJob(job)}
                               className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition-colors"
                               title="Cancel job"
                             >

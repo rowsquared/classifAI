@@ -17,9 +17,22 @@ export async function GET() {
     })
     
     return NextResponse.json({ ok: true, taxonomies })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to fetch active taxonomies:', error)
-    return NextResponse.json({ ok: false, error: String(error) }, { status: 500 })
+    console.error('Error details:', {
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta,
+      stack: error?.stack
+    })
+    return NextResponse.json({ 
+      ok: false, 
+      error: error?.message || String(error),
+      details: process.env.NODE_ENV === 'development' ? {
+        code: error?.code,
+        meta: error?.meta
+      } : undefined
+    }, { status: 500 })
   }
 }
 

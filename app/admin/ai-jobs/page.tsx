@@ -12,7 +12,7 @@ export default async function AIJobsPage() {
   const data = await serverFetchJSON<{
     jobs: any[]
     pagination: { page: number; limit: number; total: number; pages: number }
-  }>('/api/ai-labeling/jobs?page=1&limit=20')
+  }>('/api/ai-jobs?page=1&limit=20')
 
   return (
     <AIJobsClient

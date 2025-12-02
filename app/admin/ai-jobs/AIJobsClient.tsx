@@ -7,22 +7,22 @@ import { CheckCircle2, XCircle, Clock, Loader2, AlertCircle } from 'lucide-react
 
 export type AIJob = {
   id: string
+  type: 'labeling' | 'learning' | 'taxonomy_sync' | 'external_training'
   status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
-  totalSentences: number
-  processedSentences: number
-  failedSentences: number
-  batchSize: number
+  taxonomy: string
+  totalSentences?: number
+  processedSentences?: number
+  failedSentences?: number
+  recordCount?: number
+  fileName?: string
   startedAt: string
   completedAt: string | null
   errorMessage: string | null
-  taxonomy: {
-    key: string
-  }
   createdBy: {
     id: string
     name: string | null
     email: string
-  }
+  } | null
 }
 
 type Pagination = {
@@ -58,7 +58,7 @@ export default function AIJobsClient({ initialJobs, initialPagination }: Props) 
         params.append('status', statusFilter)
       }
 
-      const res = await fetch(`/api/ai-labeling/jobs?${params}`)
+      const res = await fetch(`/api/ai-jobs?${params}`)
       if (res.ok) {
         const data = await res.json()
         setJobs(data.jobs || [])
@@ -123,8 +123,30 @@ export default function AIJobsClient({ initialJobs, initialPagination }: Props) 
   }
 
   const getProgress = (job: AIJob) => {
-    if (job.totalSentences === 0) return 0
-    return Math.round((job.processedSentences / job.totalSentences) * 100)
+    if (job.type === 'external_training' || job.type === 'learning' || job.type === 'taxonomy_sync') {
+      // These jobs don't have detailed progress tracking
+      if (job.status === 'completed') return 100
+      if (job.status === 'processing') return 50
+      if (job.status === 'failed' || job.status === 'cancelled') return 0
+      return 0 // pending
+    }
+    if (!job.totalSentences || job.totalSentences === 0) return 0
+    return Math.round((job.processedSentences || 0) / job.totalSentences * 100)
+  }
+
+  const getJobTypeLabel = (type: string) => {
+    switch (type) {
+      case 'labeling':
+        return 'Labeling'
+      case 'learning':
+        return 'Learning'
+      case 'taxonomy_sync':
+        return 'Taxonomy Sync'
+      case 'external_training':
+        return 'External Training'
+      default:
+        return 'AI Job'
+    }
   }
 
   const handleJobClick = (job: AIJob) => {
@@ -132,9 +154,40 @@ export default function AIJobsClient({ initialJobs, initialPagination }: Props) 
     setShowDetailModal(true)
   }
 
+  const handleCancelJob = async (job: AIJob, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent row click
+    
+    if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+      return // Can't cancel completed/failed/cancelled jobs
+    }
+    
+    if (!confirm(`Are you sure you want to cancel this ${getJobTypeLabel(job.type).toLowerCase()} job?`)) {
+      return
+    }
+    
+    try {
+      const res = await fetch(`/api/ai-jobs/${job.id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: job.type })
+      })
+      
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to cancel job')
+      }
+      
+      // Refresh jobs list
+      await fetchJobs()
+    } catch (error) {
+      console.error('Failed to cancel AI job:', error)
+      alert(error instanceof Error ? error.message : 'Failed to cancel job')
+    }
+  }
+
   return (
     <div className="flex flex-col h-screen">
-      <PageHeader title="AI Labeling Jobs" />
+      <PageHeader title="AI Jobs" />
       
       <div className="flex-1 overflow-y-auto px-8 py-6">
         {/* Filters */}
@@ -170,12 +223,14 @@ export default function AIJobsClient({ initialJobs, initialPagination }: Props) 
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Taxonomy</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Progress</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sentences</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Details</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created By</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Started</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Completed</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -196,7 +251,12 @@ export default function AIJobsClient({ initialJobs, initialPagination }: Props) 
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-900">
-                        {job.taxonomy.key}
+                        <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
+                          {getJobTypeLabel(job.type)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        {job.taxonomy}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2 min-w-[120px]">
@@ -210,19 +270,44 @@ export default function AIJobsClient({ initialJobs, initialPagination }: Props) 
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">
-                        {job.processedSentences} / {job.totalSentences}
-                        {job.failedSentences > 0 && (
-                          <span className="text-red-600 ml-1">({job.failedSentences} failed)</span>
+                        {job.type === 'external_training' ? (
+                          <div>
+                            <div>{job.recordCount || 0} records</div>
+                            {job.fileName && (
+                              <div className="text-xs text-gray-500 truncate max-w-[200px]" title={job.fileName}>
+                                {job.fileName}
+                              </div>
+                            )}
+                          </div>
+                        ) : job.type === 'learning' || job.type === 'taxonomy_sync' ? (
+                          <span className="text-gray-500">-</span>
+                        ) : (
+                          <>
+                            {job.processedSentences || 0} / {job.totalSentences || 0}
+                            {(job.failedSentences || 0) > 0 && (
+                              <span className="text-red-600 ml-1">({job.failedSentences} failed)</span>
+                            )}
+                          </>
                         )}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">
-                        {job.createdBy.name || job.createdBy.email}
+                        {job.createdBy ? (job.createdBy.name || job.createdBy.email) : '-'}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">
                         {formatRelativeTime(new Date(job.startedAt))}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">
                         {job.completedAt ? formatRelativeTime(new Date(job.completedAt)) : '-'}
+                      </td>
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        {(job.status === 'pending' || job.status === 'processing') && (
+                          <button
+                            onClick={(e) => handleCancelJob(job, e)}
+                            className="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        )}
                       </td>
                     </tr>
                   )
@@ -300,39 +385,53 @@ export default function AIJobsClient({ initialJobs, initialPagination }: Props) 
               </div>
 
               <div>
+                <label className="text-sm font-medium text-gray-700">Type</label>
+                <p className="text-sm text-gray-900">{getJobTypeLabel(selectedJob.type)}</p>
+              </div>
+
+              <div>
                 <label className="text-sm font-medium text-gray-700">Taxonomy</label>
-                <p className="text-sm text-gray-900">{selectedJob.taxonomy.key}</p>
+                <p className="text-sm text-gray-900">{selectedJob.taxonomy}</p>
               </div>
 
-              <div>
-                <label className="text-sm font-medium text-gray-700">Progress</label>
-                <div className="mt-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="flex-1 bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${getProgress(selectedJob)}%` }}
-                      />
+              {selectedJob.type === 'labeling' && (
+                <>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700">Progress</label>
+                    <div className="mt-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="flex-1 bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
+                            style={{ width: `${getProgress(selectedJob)}%` }}
+                          />
+                        </div>
+                        <span className="text-sm text-gray-600">{getProgress(selectedJob)}%</span>
+                      </div>
+                      <p className="text-sm text-gray-600">
+                        {selectedJob.processedSentences || 0} / {selectedJob.totalSentences || 0} sentences processed
+                        {(selectedJob.failedSentences || 0) > 0 && (
+                          <span className="text-red-600 ml-1">({selectedJob.failedSentences} failed)</span>
+                        )}
+                      </p>
                     </div>
-                    <span className="text-sm text-gray-600">{getProgress(selectedJob)}%</span>
                   </div>
-                  <p className="text-sm text-gray-600">
-                    {selectedJob.processedSentences} / {selectedJob.totalSentences} sentences processed
-                    {selectedJob.failedSentences > 0 && (
-                      <span className="text-red-600 ml-1">({selectedJob.failedSentences} failed)</span>
-                    )}
-                  </p>
-                </div>
-              </div>
+                </>
+              )}
 
-              <div>
-                <label className="text-sm font-medium text-gray-700">Batch Size</label>
-                <p className="text-sm text-gray-900">{selectedJob.batchSize}</p>
-              </div>
+              {selectedJob.type === 'external_training' && (
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Training Data</label>
+                  <p className="text-sm text-gray-900">{selectedJob.recordCount || 0} records</p>
+                  {selectedJob.fileName && (
+                    <p className="text-sm text-gray-600 mt-1">File: {selectedJob.fileName}</p>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="text-sm font-medium text-gray-700">Created By</label>
-                <p className="text-sm text-gray-900">{selectedJob.createdBy.name || selectedJob.createdBy.email}</p>
+                <p className="text-sm text-gray-900">{selectedJob.createdBy ? (selectedJob.createdBy.name || selectedJob.createdBy.email) : '-'}</p>
               </div>
 
               <div>

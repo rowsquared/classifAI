@@ -26,55 +26,57 @@ enum AnnotationSource {
 }
 
 model User {
-  id                String   @id @default(cuid())
-  username          String   @unique
-  email             String   @unique
+  id                String    @id @default(cuid())
+  username          String    @unique
+  email             String    @unique
   name              String?
-  password          String   // Hashed password
+  password          String // Hashed password
   role              Role
   supervisorId      String?
-  supervisor        User?    @relation("SupervisorToLabellers", fields: [supervisorId], references: [id], onDelete: SetNull)
-  labellers         User[]   @relation("SupervisorToLabellers")
-  mustResetPassword Boolean  @default(true) // Force password reset on first login
+  supervisor        User?     @relation("SupervisorToLabellers", fields: [supervisorId], references: [id], onDelete: SetNull)
+  labellers         User[]    @relation("SupervisorToLabellers")
+  mustResetPassword Boolean   @default(true) // Force password reset on first login
   lastLogin         DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  annotations         SentenceAnnotation[]
-  comments            Comment[]
-  auditLogs           AuditLog[]
-  imports             SentenceImport[]
-  editedSentences     Sentence[] @relation("LastEditor")
-  assignedSentences   SentenceAssignment[]
-  aiLabelingJobs      AILabelingJob[]
+  annotations          SentenceAnnotation[]
+  comments             Comment[]
+  auditLogs            AuditLog[]
+  imports              SentenceImport[]
+  editedSentences      Sentence[]              @relation("LastEditor")
+  assignedSentences    SentenceAssignment[]
+  aiLabelingJobs       AILabelingJob[]
+  externalTrainingJobs AIExternalTrainingJob[] @relation("ExternalTrainingJobs")
 }
 
 model Taxonomy {
-  id           String   @id @default(cuid())
-  key          String   @unique
-  description  String?
-  levelNames   Json?    // { "1": "Major Group", "2": "Sub-major", ... }
-  maxDepth     Int      @default(5)
-  isActive     Boolean  @default(true)
-  createdById  String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  lastAISyncAt DateTime?
-  lastAISyncStatus String?
-  lastAISyncError String?
-  lastAISyncJobId String?
-  lastLearningAt DateTime?
-  lastLearningJobId String?
-  lastLearningStatus String?
-  lastLearningError String?
-  newAnnotationsSinceLastLearning Int @default(0)
+  id                              String    @id @default(cuid())
+  key                             String    @unique
+  description                     String?
+  levelNames                      Json? // { "1": "Major Group", "2": "Sub-major", ... }
+  maxDepth                        Int       @default(5)
+  isActive                        Boolean   @default(true)
+  createdById                     String?
+  createdAt                       DateTime  @default(now())
+  updatedAt                       DateTime  @updatedAt
+  lastAISyncAt                    DateTime?
+  lastAISyncStatus                String?
+  lastAISyncError                 String?
+  lastAISyncJobId                 String?
+  lastLearningAt                  DateTime?
+  lastLearningJobId               String?
+  lastLearningStatus              String?
+  lastLearningError               String?
+  newAnnotationsSinceLastLearning Int       @default(0)
 
-  nodes        TaxonomyNode[]
-  synonyms     TaxonomySynonym[]
-  annotations  SentenceAnnotation[]
-  settings     TaxonomySetting?
-  aiSuggestions SentenceAISuggestion[]
-  aiLabelingJobs AILabelingJob[]
+  nodes                TaxonomyNode[]
+  synonyms             TaxonomySynonym[]
+  annotations          SentenceAnnotation[]
+  settings             TaxonomySetting?
+  aiSuggestions        SentenceAISuggestion[]
+  aiLabelingJobs       AILabelingJob[]
+  externalTrainingJobs AIExternalTrainingJob[] @relation("ExternalTrainingJobs")
 }
 
 model TaxonomySetting {
@@ -85,19 +87,19 @@ model TaxonomySetting {
 }
 
 model TaxonomyNode {
-  code         String
-  id           String  @id @default(cuid())
-  taxonomyId   String
-  label        String
-  definition   String?
-  examples     String?
-  parentCode   String?
-  level        Int
-  path         String?
-  isLeaf       Boolean?
+  code       String
+  id         String   @id @default(cuid())
+  taxonomyId String
+  label      String
+  definition String?
+  examples   String?
+  parentCode String?
+  level      Int
+  path       String?
+  isLeaf     Boolean?
 
-  taxonomy     Taxonomy @relation(fields: [taxonomyId], references: [id])
-  synonyms     TaxonomySynonym[]
+  taxonomy Taxonomy          @relation(fields: [taxonomyId], references: [id])
+  synonyms TaxonomySynonym[]
 
   @@unique([taxonomyId, code])
   @@index([taxonomyId, level])
@@ -105,39 +107,39 @@ model TaxonomyNode {
 }
 
 model TaxonomySynonym {
-  id          String   @id @default(cuid())
-  taxonomyId  String
-  nodeId      String
-  synonym     String
+  id         String @id @default(cuid())
+  taxonomyId String
+  nodeId     String
+  synonym    String
 
-  taxonomy    Taxonomy @relation(fields: [taxonomyId], references: [id])
-  node        TaxonomyNode @relation(fields: [nodeId], references: [id])
+  taxonomy Taxonomy     @relation(fields: [taxonomyId], references: [id])
+  node     TaxonomyNode @relation(fields: [nodeId], references: [id])
 
   @@index([taxonomyId, nodeId])
 }
 
 model SentenceImport {
-  id            String   @id @default(cuid())
-  fileName      String
-  uploadedAt    DateTime @default(now())
-  uploadedById  String?
-  totalRows     Int
-  
-  uploadedBy    User?      @relation(fields: [uploadedById], references: [id])
-  sentences     Sentence[]
-  
+  id           String   @id @default(cuid())
+  fileName     String
+  uploadedAt   DateTime @default(now())
+  uploadedById String?
+  totalRows    Int
+
+  uploadedBy User?      @relation(fields: [uploadedById], references: [id])
+  sentences  Sentence[]
+
   @@index([uploadedAt])
 }
 
 model SentenceAssignment {
-  id          String   @id @default(cuid())
-  sentenceId  String
-  userId      String
-  assignedAt  DateTime @default(now())
-  assignedBy  String?
+  id         String   @id @default(cuid())
+  sentenceId String
+  userId     String
+  assignedAt DateTime @default(now())
+  assignedBy String?
 
-  sentence    Sentence @relation(fields: [sentenceId], references: [id], onDelete: Cascade)
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sentence Sentence @relation(fields: [sentenceId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([sentenceId, userId])
   @@index([userId])
@@ -145,63 +147,62 @@ model SentenceAssignment {
 }
 
 model Sentence {
-  id             String   @id @default(cuid()) // User-provided or auto-generated
-  importId       String
-  importOrder    Int      // Order within the import file (row number)
-  
+  id          String @id @default(cuid()) // User-provided or auto-generated
+  importId    String
+  importOrder Int // Order within the import file (row number)
+
   // Field columns (what gets labeled) - max 5
-  field1         String   // Required: first field_ column from CSV
-  field2         String?
-  field3         String?
-  field4         String?
-  field5         String?
-  
+  field1 String // Required: first field_ column from CSV
+  field2 String?
+  field3 String?
+  field4 String?
+  field5 String?
+
   // Support columns (context/metadata) - max 5
-  support1       String?
-  support2       String?
-  support3       String?
-  support4       String?
-  support5       String?
-  
+  support1 String?
+  support2 String?
+  support3 String?
+  support4 String?
+  support5 String?
+
   // Field name mappings for UI display
-  fieldMapping   Json     // { "1": "job_title", "2": "job_description", ... }
-  supportMapping Json?    // { "1": "years_experience", "2": "industry", ... }
-  
-  flagged        Boolean          @default(false)
-  status         SentenceStatus   @default(pending)
-  lastEditorId   String?
-  lastEditedAt   DateTime?
-  createdAt      DateTime         @default(now())
-  
-  import         SentenceImport       @relation(fields: [importId], references: [id], onDelete: Cascade)
-  lastEditor     User?                @relation("LastEditor", fields: [lastEditorId], references: [id])
-  annotations    SentenceAnnotation[]
-  comments       Comment[]
-  assignments    SentenceAssignment[]
-  aiSuggestions  SentenceAISuggestion[]
-  
+  fieldMapping   Json // { "1": "job_title", "2": "job_description", ... }
+  supportMapping Json? // { "1": "years_experience", "2": "industry", ... }
+
+  flagged      Boolean        @default(false)
+  status       SentenceStatus @default(pending)
+  lastEditorId String?
+  lastEditedAt DateTime?
+  createdAt    DateTime       @default(now())
+
+  import        SentenceImport         @relation(fields: [importId], references: [id], onDelete: Cascade)
+  lastEditor    User?                  @relation("LastEditor", fields: [lastEditorId], references: [id])
+  annotations   SentenceAnnotation[]
+  comments      Comment[]
+  assignments   SentenceAssignment[]
+  aiSuggestions SentenceAISuggestion[]
+
   @@index([importId])
   @@index([status])
   @@index([field1])
   @@index([importId, importOrder])
 }
 
-
 model SentenceAnnotation {
-  id                String    @id @default(cuid())
+  id                String           @id @default(cuid())
   sentenceId        String
   taxonomyId        String
   level             Int
-  nodeCode          String    // '-99' = unknown
+  nodeCode          String // '-99' = unknown
   source            AnnotationSource
   createdById       String?
   labelingStartedAt DateTime? // When labeling session started
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
-  sentence     Sentence @relation(fields: [sentenceId], references: [id])
-  taxonomy     Taxonomy @relation(fields: [taxonomyId], references: [id])
-  createdBy    User?    @relation(fields: [createdById], references: [id])
+  sentence  Sentence @relation(fields: [sentenceId], references: [id])
+  taxonomy  Taxonomy @relation(fields: [taxonomyId], references: [id])
+  createdBy User?    @relation(fields: [createdById], references: [id])
 
   @@index([sentenceId, taxonomyId, level])
   @@index([nodeCode])
@@ -214,6 +215,13 @@ enum AILabelingJobStatus {
   completed
   failed
   cancelled
+}
+
+enum AIJobType {
+  labeling
+  learning
+  taxonomy_sync
+  external_training
 }
 
 model SentenceAISuggestion {
@@ -236,20 +244,20 @@ model SentenceAISuggestion {
 }
 
 model AILabelingJob {
-  id                 String               @id @default(cuid())
+  id                 String              @id @default(cuid())
   createdById        String
   taxonomyId         String
-  status             AILabelingJobStatus  @default(pending)
+  status             AILabelingJobStatus @default(pending)
   totalSentences     Int
-  processedSentences Int                  @default(0)
-  failedSentences    Int                  @default(0)
-  batchSize          Int                  @default(100)
+  processedSentences Int                 @default(0)
+  failedSentences    Int                 @default(0)
+  batchSize          Int                 @default(100)
   filterCriteria     Json?
-  startedAt          DateTime             @default(now())
+  startedAt          DateTime            @default(now())
   completedAt        DateTime?
   errorMessage       String?
 
-  createdBy User @relation(fields: [createdById], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
   taxonomy  Taxonomy @relation(fields: [taxonomyId], references: [id])
 
   @@index([status])
@@ -258,17 +266,39 @@ model AILabelingJob {
   @@index([startedAt])
 }
 
-model Comment {
-  id          String   @id @default(cuid())
-  sentenceId  String
-  authorId    String
-  body        String
-  resolved    Boolean  @default(false)
-  resolvedAt  DateTime?
-  createdAt   DateTime @default(now())
+model AIExternalTrainingJob {
+  id              String              @id @default(cuid())
+  createdById     String
+  taxonomyId      String
+  status          AILabelingJobStatus @default(pending)
+  jobType         AIJobType           @default(external_training)
+  trainingDataUrl String // URL to the JSON file (e.g., /training-data/{jobId}.json)
+  fileName        String // Original CSV file name
+  recordCount     Int // Number of training records
+  startedAt       DateTime            @default(now())
+  completedAt     DateTime?
+  errorMessage    String?
 
-  sentence    Sentence @relation(fields: [sentenceId], references: [id])
-  author      User     @relation(fields: [authorId], references: [id])
+  createdBy User     @relation("ExternalTrainingJobs", fields: [createdById], references: [id])
+  taxonomy  Taxonomy @relation("ExternalTrainingJobs", fields: [taxonomyId], references: [id])
+
+  @@index([status])
+  @@index([createdById])
+  @@index([taxonomyId])
+  @@index([startedAt])
+}
+
+model Comment {
+  id         String    @id @default(cuid())
+  sentenceId String
+  authorId   String
+  body       String
+  resolved   Boolean   @default(false)
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  sentence Sentence @relation(fields: [sentenceId], references: [id])
+  author   User     @relation(fields: [authorId], references: [id])
 
   @@index([sentenceId])
 }
@@ -282,5 +312,5 @@ model AuditLog {
   payload    Json?
   createdAt  DateTime @default(now())
 
-  actor      User?    @relation(fields: [actorId], references: [id])
+  actor User? @relation(fields: [actorId], references: [id])
 }

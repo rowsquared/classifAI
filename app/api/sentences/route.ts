@@ -487,8 +487,20 @@ export async function GET(request: Request) {
         pages: Math.ceil(total / limit),
       },
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Sentences API error:', error)
-    return NextResponse.json({ error: String(error) }, { status: 500 })
+    console.error('Error details:', {
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta,
+      stack: error?.stack
+    })
+    return NextResponse.json({ 
+      error: error?.message || String(error),
+      details: process.env.NODE_ENV === 'development' ? {
+        code: error?.code,
+        meta: error?.meta
+      } : undefined
+    }, { status: 500 })
   }
 }

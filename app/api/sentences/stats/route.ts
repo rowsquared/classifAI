@@ -88,32 +88,17 @@ export async function GET(req: NextRequest) {
     // User filter
     const userId = searchParams.get('userId')
     if (userId) {
-      AND.push({ lastEditorId: userId })
-    }
-
-    const lastEditorId = searchParams.get('lastEditorId')
-    if (lastEditorId) {
-      AND.push({ lastEditorId })
+      AND.push({ lastEditedBy: userId })
     }
 
     // Assigned to filter
     const assignedToUserId = searchParams.get('assignedToUserId')
     if (assignedToUserId) {
-      if (assignedToUserId === 'unassigned') {
-        // Filter for sentences with no assignments
-        AND.push({
-          assignments: {
-            none: {}
-          }
-        })
-      } else {
-        // Filter for sentences assigned to specific user
-        AND.push({
-          assignments: {
-            some: { userId: assignedToUserId }
-          }
-        })
-      }
+      AND.push({
+        assignments: {
+          some: { userId: assignedToUserId }
+        }
+      })
     }
 
     // Date range filter
@@ -281,9 +266,22 @@ export async function GET(req: NextRequest) {
         progress: total > 0 ? Math.round((submitted / total) * 100) : 0
       }
     })
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to fetch sentence stats:', error)
-    return NextResponse.json({ ok: false, error: String(error) }, { status: 500 })
+    console.error('Error details:', {
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta,
+      stack: error?.stack
+    })
+    return NextResponse.json({ 
+      ok: false, 
+      error: error?.message || String(error),
+      details: process.env.NODE_ENV === 'development' ? {
+        code: error?.code,
+        meta: error?.meta
+      } : undefined
+    }, { status: 500 })
   }
 }
 
