@@ -1,5 +1,5 @@
 "use client"
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import PageHeader from '@/components/PageHeader'
 import { formatRelativeTime, formatDate } from '@/lib/utils'
 
@@ -100,6 +100,22 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
   
   // Detected max depth from CSV
   const [detectedMaxDepth, setDetectedMaxDepth] = useState<number | null>(null)
+
+  // Poll for taxonomy updates when there are active AI sync or learning jobs
+  useEffect(() => {
+    const hasActiveJobs = taxonomies.some(t => 
+      (t.lastAISyncStatus === 'pending' || t.lastAISyncStatus === 'processing') ||
+      (t.lastLearningStatus === 'pending' || t.lastLearningStatus === 'processing')
+    )
+    
+    if (!hasActiveJobs) return
+
+    const interval = setInterval(() => {
+      loadTaxonomies()
+    }, 5000) // Poll every 5 seconds
+
+    return () => clearInterval(interval)
+  }, [taxonomies])
 
   async function loadTaxonomies() {
     try {
@@ -372,6 +388,10 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
 
   function isTraining(key: string) {
     return trainingKeys.has(key)
+  }
+
+  function isSyncedWithAI(taxonomy: Taxonomy) {
+    return taxonomy.lastAISyncStatus === 'completed' || taxonomy.lastAISyncStatus === 'success'
   }
 
   function openExternalTrainingModal(taxonomy: Taxonomy) {
@@ -735,6 +755,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                           <button
                             onClick={() => handleLearning(taxonomy)}
                             disabled={
+                              !isSyncedWithAI(taxonomy) ||
                               isLearning(taxonomy.key) ||
                               taxonomy.newAnnotationsSinceLastLearning < learningThreshold
                             }
@@ -756,7 +777,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                         <div className="flex flex-col">
                           <button
                             onClick={() => openExternalTrainingModal(taxonomy)}
-                            disabled={isTraining(taxonomy.key)}
+                            disabled={!isSyncedWithAI(taxonomy) || isTraining(taxonomy.key)}
                             className="px-4 py-2.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
                           >
                             {isTraining(taxonomy.key) ? 'Processing…' : 'Upload external training data'}

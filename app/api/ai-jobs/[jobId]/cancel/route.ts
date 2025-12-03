@@ -20,7 +20,7 @@ export async function POST(
     if (type === 'labeling') {
       const job = await prisma.aILabelingJob.findUnique({
         where: { id: jobId },
-        select: { status: true }
+        select: { status: true, startedAt: true }
       })
 
       if (!job) {
@@ -31,15 +31,26 @@ export async function POST(
         return NextResponse.json({ ok: true, status: job.status })
       }
 
+      // For stuck jobs (processing for > 1 hour), mark as failed instead of cancelled
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
+      const isStuck = job.status === 'processing' && job.startedAt < oneHourAgo
+
       await prisma.aILabelingJob.update({
         where: { id: jobId },
         data: {
-          status: 'cancelled',
-          completedAt: new Date()
+          status: isStuck ? 'failed' : 'cancelled',
+          completedAt: new Date(),
+          errorMessage: isStuck 
+            ? 'Job was stuck in processing state and has been cancelled'
+            : 'Cancelled by user'
         }
       })
 
-      return NextResponse.json({ ok: true, status: 'cancelled' })
+      // After cancelling, trigger processor to pick up any pending jobs
+      const { triggerAILabelingProcessor } = await import('@/lib/ai-job-runner')
+      triggerAILabelingProcessor()
+
+      return NextResponse.json({ ok: true, status: isStuck ? 'failed' : 'cancelled' })
     }
 
     if (type === 'external_training') {

@@ -16,6 +16,26 @@ const globalAny = globalThis as typeof globalThis & {
 
 async function processJobsLoop() {
   while (true) {
+    // First, check for and recover stuck jobs (jobs in 'processing' state for > 1 hour without progress)
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
+    const stuckJobs = await prisma.aILabelingJob.findMany({
+      where: {
+        status: 'processing',
+        startedAt: { lt: oneHourAgo }
+      }
+    })
+
+    for (const stuckJob of stuckJobs) {
+      console.warn(`Detected stuck job ${stuckJob.id}, resetting to pending`)
+      await prisma.aILabelingJob.update({
+        where: { id: stuckJob.id },
+        data: {
+          status: 'pending',
+          errorMessage: 'Job was stuck and has been reset'
+        }
+      })
+    }
+
     const job = await prisma.aILabelingJob.findFirst({
       where: {
         OR: [
@@ -42,12 +62,14 @@ async function processJobsLoop() {
           completedAt: new Date()
         }
       })
+      // Continue processing other jobs even if one fails
     }
   }
 }
 
 export function triggerAILabelingProcessor() {
   if (globalAny.__aiJobProcessorRunning) {
+    // Processor is already running, it will pick up new jobs in its loop
     return
   }
   globalAny.__aiJobProcessorRunning = true
@@ -57,6 +79,24 @@ export function triggerAILabelingProcessor() {
       await processJobsLoop()
     } catch (error) {
       console.error('AI job processor encountered an error:', error)
+      // On error, still try to process remaining jobs
+      const remainingJobs = await prisma.aILabelingJob.findFirst({
+        where: {
+          OR: [
+            { status: 'pending' },
+            { status: 'processing' }
+          ]
+        }
+      })
+      if (remainingJobs) {
+        console.log('Retrying AI job processor after error...')
+        // Reset the flag and retry after a short delay
+        globalAny.__aiJobProcessorRunning = false
+        setTimeout(() => {
+          triggerAILabelingProcessor()
+        }, 1000)
+        return
+      }
     } finally {
       globalAny.__aiJobProcessorRunning = false
     }
@@ -288,5 +328,24 @@ async function processSingleJob(jobId: string) {
       completedAt: new Date()
     }
   })
+
+  // After completing a job, check if there are more pending jobs and continue processing
+  // This ensures queued jobs are picked up immediately
+  const hasMoreJobs = await prisma.aILabelingJob.findFirst({
+    where: {
+      OR: [
+        { status: 'pending' },
+        { status: 'processing' }
+      ]
+    }
+  })
+
+  if (hasMoreJobs) {
+    // Trigger processor again to pick up the next job
+    // Use setTimeout to avoid blocking and allow the current job to fully complete
+    setTimeout(() => {
+      triggerAILabelingProcessor()
+    }, 100)
+  }
 }
 

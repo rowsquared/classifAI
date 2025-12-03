@@ -116,42 +116,54 @@ export default function AIJobStatusBadge() {
         }
         
         // Fetch all active jobs from the unified endpoint
-        const res = await fetch('/api/ai-jobs/active')
-        if (res.ok) {
-          const data = await res.json()
-          if (data.ok && data.jobs) {
-            // Filter to only show active jobs (pending/processing)
-            const active = data.jobs.filter((job: AIJob) => 
-              job.status === 'pending' || job.status === 'processing'
-            )
-            // Only update if there's a meaningful change to avoid unnecessary re-renders
-            setActiveJobs(prev => {
-              // Check if the job list actually changed
-              const prevIds = new Set(prev.map(j => j.id))
-              const newIds = new Set(active.map(j => j.id))
-              const idsChanged = prevIds.size !== newIds.size || 
-                [...prevIds].some(id => !newIds.has(id)) ||
-                [...newIds].some(id => !prevIds.has(id))
-              
-              // Also check if any job status changed
-              const statusChanged = prev.some(pJob => {
-                const nJob = active.find(a => a.id === pJob.id)
-                return nJob && nJob.status !== pJob.status
+        try {
+          const res = await fetch('/api/ai-jobs/active')
+          if (res.ok) {
+            const data = await res.json()
+            if (data.ok && data.jobs) {
+              // Filter to only show active jobs (pending/processing)
+              const active = data.jobs.filter((job: AIJob) => 
+                job.status === 'pending' || job.status === 'processing'
+              )
+              // Only update if there's a meaningful change to avoid unnecessary re-renders
+              setActiveJobs(prev => {
+                // Check if the job list actually changed
+                const prevIds = new Set(prev.map(j => j.id))
+                const newIds = new Set(active.map(j => j.id))
+                const idsChanged = prevIds.size !== newIds.size || 
+                  [...prevIds].some(id => !newIds.has(id)) ||
+                  [...newIds].some(id => !prevIds.has(id))
+                
+                // Also check if any job status changed
+                const statusChanged = prev.some(pJob => {
+                  const nJob = active.find(a => a.id === pJob.id)
+                  return nJob && nJob.status !== pJob.status
+                })
+                
+                // Only update if something actually changed
+                if (idsChanged || statusChanged) {
+                  return active
+                }
+                return prev // Return previous to avoid re-render
               })
-              
-              // Only update if something actually changed
-              if (idsChanged || statusChanged) {
-                return active
-              }
-              return prev // Return previous to avoid re-render
-            })
+            } else {
+              // Only clear if we had jobs before
+              setActiveJobs(prev => prev.length > 0 ? [] : prev)
+            }
+          } else if (res.status === 401) {
+            // User is not authorized (not admin), silently ignore
+            setActiveJobs([])
           } else {
             // Only clear if we had jobs before
             setActiveJobs(prev => prev.length > 0 ? [] : prev)
           }
-        } else {
-          // Only clear if we had jobs before
-          setActiveJobs(prev => prev.length > 0 ? [] : prev)
+        } catch (fetchError) {
+          // Handle fetch errors for the /api/ai-jobs/active endpoint
+          if (fetchError instanceof TypeError && fetchError.message === 'Failed to fetch') {
+            setActiveJobs([])
+          } else {
+            console.error('Failed to fetch active jobs:', fetchError)
+          }
         }
         
         // Also check for session-based queued jobs (for labeling from queue page)
@@ -184,7 +196,15 @@ export default function AIJobStatusBadge() {
           })
         }
       } catch (error) {
-        console.error('Failed to fetch active jobs:', error)
+        // Silently handle network errors - don't spam console
+        // Only log if it's not a network error (which is common during development)
+        if (error instanceof TypeError && error.message === 'Failed to fetch') {
+          // Network error - likely server is down or endpoint doesn't exist
+          // Silently clear jobs
+          setActiveJobs([])
+        } else {
+          console.error('Failed to fetch active jobs:', error)
+        }
       } finally {
         if (isInitialLoad) {
           setLoading(false)

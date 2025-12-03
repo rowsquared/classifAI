@@ -146,13 +146,14 @@ export async function GET(req: NextRequest) {
       }))
     ]
 
-    // Sort by startedAt descending, then by id descending for stable ordering
-    // This ensures all jobs are shown even if they have the same startedAt timestamp
+    // Sort by most recent activity (completedAt if available, otherwise startedAt)
+    // This puts active jobs first, then most recently completed jobs
     allJobs.sort((a, b) => {
-      const timeA = new Date(a.startedAt).getTime()
-      const timeB = new Date(b.startedAt).getTime()
+      // Use completedAt if available, otherwise startedAt
+      const timeA = new Date(a.completedAt || a.startedAt).getTime()
+      const timeB = new Date(b.completedAt || b.startedAt).getTime()
       if (timeB !== timeA) {
-        return timeB - timeA // Different timestamps: sort by time descending
+        return timeB - timeA // Different timestamps: sort by time descending (most recent first)
       }
       // Same timestamp: sort by id descending (newer IDs come first)
       return b.id.localeCompare(a.id)
