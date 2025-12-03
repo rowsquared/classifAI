@@ -4,13 +4,12 @@ import { prisma } from '@/lib/prisma'
 export async function GET() {
   try {
     const taxonomies = await prisma.taxonomy.findMany({
-      where: { isActive: true },
+      where: {},
       select: {
         id: true,
         key: true,
         maxDepth: true,
         levelNames: true,
-        isActive: true,
         lastAISyncStatus: true
       },
       orderBy: { createdAt: 'asc' }

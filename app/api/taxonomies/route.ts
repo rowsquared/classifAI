@@ -7,13 +7,10 @@ const MAX_ACTIVE_TAXONOMIES = 3
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url)
-    const includeDeleted = searchParams.get('includeDeleted') === 'true'
-
-    const where = includeDeleted ? {} : { isActive: true }
-
+    // No longer filtering by isActive since we're using hard delete
+    // Keep the parameter for backward compatibility but ignore it
     const taxonomies = await prisma.taxonomy.findMany({
-      where,
+      where: {},
       include: {
         _count: {
           select: { 
@@ -23,7 +20,6 @@ export async function GET(req: NextRequest) {
         }
       },
       orderBy: [
-        { isActive: 'desc' },
         { createdAt: 'desc' }
       ]
     })
@@ -122,10 +118,8 @@ export async function POST(req: NextRequest) {
       }, { status: 400 })
     }
 
-    // Check active taxonomy limit
-    const activeTaxonomiesCount = await prisma.taxonomy.count({
-      where: { isActive: true }
-    })
+    // Check active taxonomy limit (all taxonomies are active now since we use hard delete)
+    const activeTaxonomiesCount = await prisma.taxonomy.count()
 
     if (activeTaxonomiesCount >= MAX_ACTIVE_TAXONOMIES) {
       return NextResponse.json({ 
@@ -293,8 +287,7 @@ export async function POST(req: NextRequest) {
           key,
           description: description || null,
           maxDepth,
-          levelNames: levelNames || undefined,
-          isActive: true
+          levelNames: levelNames || undefined
         }
       })
 

@@ -120,7 +120,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
   async function loadTaxonomies() {
     try {
       setLoading(true)
-      const res = await fetch('/api/taxonomies?includeDeleted=true')
+      const res = await fetch('/api/taxonomies')
       const data = await res.json()
       if (data.ok) {
         if (typeof data.learningThreshold === 'number') {
@@ -136,8 +136,8 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     }
   }
 
-  const activeTaxonomies = taxonomies.filter(t => t.isActive)
-  const deletedTaxonomies = taxonomies.filter(t => !t.isActive)
+  // All taxonomies are active now since we use hard delete
+  const activeTaxonomies = taxonomies
   const canAddNew = activeTaxonomies.length < MAX_ACTIVE_TAXONOMIES
 
   function openCreateModal() {
@@ -354,7 +354,10 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
       const data = await res.json()
 
       if (res.ok) {
-        setMessage({ type: 'success', text: `Successfully deleted taxonomy "${selectedTaxonomy.key}". ${data.preservedNodes} nodes and ${data.preservedAnnotations} annotations preserved.` })
+        const deletedInfo = data.deleted ? 
+          `Deleted ${data.deleted.nodes} nodes, ${data.deleted.annotations} annotations, ${data.deleted.aiSuggestions} AI suggestions, and ${data.deleted.synonyms} synonyms.` :
+          'Taxonomy and all associated data deleted successfully.'
+        setMessage({ type: 'success', text: `Successfully deleted taxonomy "${selectedTaxonomy.key}". ${deletedInfo}` })
         setDeleteModalOpen(false)
         setSelectedTaxonomy(null)
         loadTaxonomies()
@@ -607,34 +610,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     )
   }
 
-  async function handleRestore(taxonomy: Taxonomy) {
-    if (activeTaxonomies.length >= MAX_ACTIVE_TAXONOMIES) {
-      setMessage({ type: 'error', text: `Maximum ${MAX_ACTIVE_TAXONOMIES} active taxonomies allowed. Please delete one before restoring.` })
-      return
-    }
-
-    setSubmitting(true)
-    setMessage(null)
-
-    try {
-      const res = await fetch(`/api/taxonomies/${taxonomy.key}/restore`, {
-        method: 'POST'
-      })
-
-      const data = await res.json()
-
-      if (res.ok) {
-        setMessage({ type: 'success', text: `Successfully restored taxonomy "${taxonomy.key}"!` })
-        loadTaxonomies()
-      } else {
-        setMessage({ type: 'error', text: data.error || 'Failed to restore taxonomy' })
-      }
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Network error' })
-    } finally {
-      setSubmitting(false)
-    }
-  }
 
   return (
     <>
@@ -795,43 +770,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
               )}
             </div>
 
-            {/* Deleted Taxonomies */}
-            {deletedTaxonomies.length > 0 && (
-              <>
-                <div className="border-t border-gray-300 my-8 relative">
-                  <span className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white px-4 text-sm text-gray-500">
-                    Deleted Taxonomies
-                  </span>
-                </div>
-
-                <div className="space-y-4">
-                  {deletedTaxonomies.map(taxonomy => (
-                    <div key={taxonomy.id} className="bg-gray-50 rounded-lg border border-gray-300 p-4 opacity-75">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">📚</span>
-                            <h3 className="font-semibold text-gray-700">{taxonomy.key}</h3>
-                            <span className="text-xs text-gray-500">(deleted)</span>
-                          </div>
-                          <p className="text-sm text-gray-600">{taxonomy.key}</p>
-                          <p className="text-xs text-gray-500 mt-1">
-                            {taxonomy.nodeCount} nodes • Deleted: {formatDate(taxonomy.updatedAt)}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => handleRestore(taxonomy)}
-                          disabled={!canAddNew || submitting}
-                          className="px-4 py-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Restore
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
           </>
         )}
       </div>
@@ -1377,9 +1315,10 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
               <div className="text-sm text-gray-600 space-y-1">
                 <p>This will:</p>
                 <ul className="list-disc list-inside pl-2">
-                  <li>Soft-delete the taxonomy (can restore later)</li>
-                  <li>Hide it from active use</li>
-                  <li>Preserve {selectedTaxonomy.nodeCount} nodes and {selectedTaxonomy.annotationCount} annotations</li>
+                  <li>Permanently delete the taxonomy and all associated data</li>
+                  <li>Delete {selectedTaxonomy.nodeCount} nodes and {selectedTaxonomy.annotationCount} annotations</li>
+                  <li>Delete all AI suggestions for this taxonomy</li>
+                  <li>This action cannot be undone</li>
                 </ul>
               </div>
 

@@ -300,7 +300,9 @@ export async function DELETE(
         _count: {
           select: {
             nodes: true,
-            annotations: true
+            annotations: true,
+            aiSuggestions: true,
+            synonyms: true
           }
         }
       }
@@ -313,64 +315,87 @@ export async function DELETE(
       }, { status: 404 })
     }
 
-    // Soft delete
-    const deletedTaxonomy = await prisma.taxonomy.update({
-      where: { key },
-      data: { isActive: false } as Prisma.TaxonomyUpdateInput
-    })
+    const taxonomyId = existingTaxonomy.id
+    const taxonomyKey = existingTaxonomy.key
 
+    // Notify external AI service before deletion (fire and forget)
     try {
-      const jobId = await startAIJob('/taxonomies', {
+      const { startAIJob } = await import('@/lib/ai-labeling')
+      await startAIJob('/taxonomies', {
         action: 'delete',
         taxonomy: {
-          key: deletedTaxonomy.key
+          key: taxonomyKey
         }
       })
-
-      await prisma.taxonomy.update({
-        where: { id: deletedTaxonomy.id },
-        data: {
-          lastAISyncJobId: jobId,
-          lastAISyncAt: new Date(),
-          lastAISyncStatus: 'deleting',
-          lastAISyncError: null
-        } as Prisma.TaxonomyUpdateInput
-      })
-
-      monitorAIJob(jobId, `/taxonomies/${jobId}/status`, async (result) => {
-        const data = (result.success
-          ? {
-              lastAISyncStatus: 'deleted',
-              lastAISyncAt: new Date(),
-              lastAISyncError: null
-            }
-          : {
-              lastAISyncStatus: 'delete_failed',
-              lastAISyncAt: new Date(),
-              lastAISyncError: result.error || result.data?.error || 'Failed to delete taxonomy in AI service'
-            }) as unknown as Prisma.TaxonomyUpdateInput
-        await prisma.taxonomy.update({
-          where: { id: deletedTaxonomy.id },
-          data
-        })
-      })
     } catch (syncError) {
-      console.error('Failed to start AI taxonomy delete job:', syncError)
-      await prisma.taxonomy.update({
-        where: { id: deletedTaxonomy.id },
-        data: {
-          lastAISyncAt: new Date(),
-          lastAISyncStatus: 'delete_failed',
-          lastAISyncError: syncError instanceof Error ? syncError.message : String(syncError)
-        } as Prisma.TaxonomyUpdateInput
-      })
+      console.error('Failed to notify AI service about taxonomy deletion (continuing anyway):', syncError)
+      // Continue with deletion even if AI sync fails
     }
+
+    // Hard delete: Delete all related data in a transaction
+    const deletionResult = await prisma.$transaction(async (tx) => {
+      // Delete AI suggestions for this taxonomy
+      const deletedAISuggestions = await tx.sentenceAISuggestion.deleteMany({
+        where: { taxonomyId }
+      })
+
+      // Delete annotations (submitted labels) for this taxonomy
+      const deletedAnnotations = await tx.sentenceAnnotation.deleteMany({
+        where: { taxonomyId }
+      })
+
+      // Delete taxonomy synonyms (they reference nodes, so delete before nodes)
+      const deletedSynonyms = await tx.taxonomySynonym.deleteMany({
+        where: { taxonomyId }
+      })
+
+      // Delete taxonomy nodes (this will cascade to synonyms, but we already deleted them)
+      const deletedNodes = await tx.taxonomyNode.deleteMany({
+        where: { taxonomyId }
+      })
+
+      // Delete taxonomy settings
+      await tx.taxonomySetting.deleteMany({
+        where: { taxonomyId }
+      })
+
+      // Delete AI labeling jobs for this taxonomy
+      await tx.aILabelingJob.deleteMany({
+        where: { taxonomyId }
+      })
+
+      // Delete external training jobs for this taxonomy
+      try {
+        await (tx as any).aIExternalTrainingJob.deleteMany({
+          where: { taxonomyId }
+        })
+      } catch (error) {
+        // Table might not exist in older databases, ignore
+        console.warn('Could not delete external training jobs (table may not exist):', error)
+      }
+
+      // Finally, delete the taxonomy itself
+      await tx.taxonomy.delete({
+        where: { id: taxonomyId }
+      })
+
+      return {
+        deletedNodes: deletedNodes.count,
+        deletedAnnotations: deletedAnnotations.count,
+        deletedAISuggestions: deletedAISuggestions.count,
+        deletedSynonyms: deletedSynonyms.count
+      }
+    })
 
     return NextResponse.json({ 
       ok: true, 
-      taxonomy: deletedTaxonomy,
-      preservedNodes: existingTaxonomy._count.nodes,
-      preservedAnnotations: existingTaxonomy._count.annotations
+      message: 'Taxonomy and all associated data deleted successfully',
+      deleted: {
+        nodes: deletionResult.deletedNodes,
+        annotations: deletionResult.deletedAnnotations,
+        aiSuggestions: deletionResult.deletedAISuggestions,
+        synonyms: deletionResult.deletedSynonyms
+      }
     })
 
   } catch (error: any) {
