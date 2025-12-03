@@ -425,18 +425,45 @@ export default function TaxonomyBrowser({
     let currentNode = node
     while (currentNode.parentCode !== null && currentNode.parentCode !== undefined) {
       try {
-        // Fetch all nodes at the parent's level and find the specific parent by code
-        const res = await fetch(`/api/taxonomies/${taxonomy.key}/nodes?level=${currentNode.level - 1}`)
-        if (!res.ok) break
+        // Fetch all nodes at the parent's level with a higher limit to ensure we get the parent
+        // The default limit is 100, but some taxonomies might have more nodes at a level
+        const res = await fetch(`/api/taxonomies/${taxonomy.key}/nodes?level=${currentNode.level - 1}&limit=500`)
+        if (!res.ok) {
+          console.warn(`Failed to fetch nodes at level ${currentNode.level - 1}`)
+          break
+        }
         
         const data = await res.json()
-        // Find the specific parent by code
-        const parent = data.items?.find((n: TaxonomyNode) => n.code === currentNode.parentCode)
+        // Find the specific parent by code - ensure string comparison to handle leading zeros
+        const parent = data.items?.find((n: TaxonomyNode) => String(n.code) === String(currentNode.parentCode))
         
-        if (!parent) break
-        
-        path.unshift(parent) // Add to beginning of array
-        currentNode = parent
+        if (!parent) {
+          // If parent not found in first page, check if there are more results
+          if (data.total > data.items.length) {
+            console.warn(`Parent node with code ${currentNode.parentCode} not found in first ${data.items.length} nodes at level ${currentNode.level - 1} (total: ${data.total})`)
+            // Try fetching with offset to get more results
+            let found = false
+            for (let offset = data.items.length; offset < data.total && offset < 2000; offset += 500) {
+              const moreRes = await fetch(`/api/taxonomies/${taxonomy.key}/nodes?level=${currentNode.level - 1}&limit=500&offset=${offset}`)
+              if (!moreRes.ok) break
+              const moreData = await moreRes.json()
+              const foundParent = moreData.items?.find((n: TaxonomyNode) => String(n.code) === String(currentNode.parentCode))
+              if (foundParent) {
+                path.unshift(foundParent)
+                currentNode = foundParent
+                found = true
+                break
+              }
+            }
+            if (!found) break
+          } else {
+            console.warn(`Parent node with code ${currentNode.parentCode} not found at level ${currentNode.level - 1}`)
+            break
+          }
+        } else {
+          path.unshift(parent) // Add to beginning of array
+          currentNode = parent
+        }
       } catch (error) {
         console.error('Failed to fetch parent node:', error)
         break
