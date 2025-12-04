@@ -43,25 +43,40 @@ export default function LabelingPage() {
   const searchParams = useSearchParams()
   const sentenceId = params.sentenceId as string
   
-  // Get navigation list from URL params (reactive to URL changes)
+  // Get navigation list from sessionStorage (reactive to URL changes)
   const { sentenceIds, currentIndex } = useMemo(() => {
-    const listParam = searchParams.get('list')
-    const indexParam = searchParams.get('index')
-    const ids = listParam ? listParam.split(',') : []
-    let idx = indexParam ? parseInt(indexParam, 10) : -1
+    const storageKey = searchParams.get('list')
     
-    // Verify that the currentIndex matches the sentenceId (in case URL was manually changed)
-    if (ids.length > 0 && idx >= 0 && idx < ids.length) {
-      if (ids[idx] !== sentenceId) {
-        // Find the correct index
-        const correctIndex = ids.indexOf(sentenceId)
-        if (correctIndex >= 0) {
-          idx = correctIndex
+    if (storageKey) {
+      try {
+        const stored = sessionStorage.getItem(storageKey)
+        if (stored) {
+          const data = JSON.parse(stored)
+          // Check if data is not too old (1 hour expiry)
+          if (data.timestamp && Date.now() - data.timestamp < 3600000) {
+            const ids = data.sentenceIds || []
+            let idx = data.currentIndex !== undefined ? parseInt(String(data.currentIndex), 10) : -1
+            
+            // Verify that the currentIndex matches the sentenceId
+            if (ids.length > 0 && idx >= 0 && idx < ids.length) {
+              if (ids[idx] !== sentenceId) {
+                const correctIndex = ids.indexOf(sentenceId)
+                if (correctIndex >= 0) {
+                  idx = correctIndex
+                }
+              }
+            }
+            
+            return { sentenceIds: ids, currentIndex: idx }
+          }
         }
+      } catch (error) {
+        console.error('Failed to read sentence list from sessionStorage:', error)
       }
     }
     
-    return { sentenceIds: ids, currentIndex: idx }
+    // No valid list found
+    return { sentenceIds: [], currentIndex: -1 }
   }, [searchParams, sentenceId])
   
   const [sentence, setSentence] = useState<Sentence | null>(null)
@@ -367,9 +382,17 @@ export default function LabelingPage() {
     }
     
     const targetId = sentenceIds[targetIndex]
+    const storageKey = `sentence-list-${targetId}`
+    
+    // Store list in sessionStorage
+    sessionStorage.setItem(storageKey, JSON.stringify({
+      sentenceIds,
+      currentIndex: targetIndex,
+      timestamp: Date.now()
+    }))
+    
     const params = new URLSearchParams()
-    params.set('list', sentenceIds.join(','))
-    params.set('index', targetIndex.toString())
+    params.set('list', storageKey)
     router.push(`/queue/${targetId}?${params.toString()}`)
   }
 

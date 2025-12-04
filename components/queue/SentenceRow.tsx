@@ -102,14 +102,22 @@ export default function SentenceRow({
     if ((e.target as HTMLElement).closest('input[type="checkbox"]')) {
       return
     }
-    // Include list and index in URL for navigation context
-    const params = new URLSearchParams()
+    
+    // Store list and index in sessionStorage for navigation context
+    // This avoids URL length limits (431 errors) and keeps URLs clean
     if (sentenceIds.length > 0) {
-      params.set('list', sentenceIds.join(','))
-      params.set('index', currentIndex.toString())
+      const storageKey = `sentence-list-${sentence.id}`
+      sessionStorage.setItem(storageKey, JSON.stringify({
+        sentenceIds,
+        currentIndex,
+        timestamp: Date.now()
+      }))
+      const params = new URLSearchParams()
+      params.set('list', storageKey)
+      router.push(`/queue/${sentence.id}?${params.toString()}`)
+    } else {
+      router.push(`/queue/${sentence.id}`)
     }
-    const queryString = params.toString()
-    router.push(`/queue/${sentence.id}${queryString ? `?${queryString}` : ''}`)
   }
 
   const getStatusColor = (status: string) => {

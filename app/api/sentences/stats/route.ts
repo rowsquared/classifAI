@@ -85,20 +85,35 @@ export async function GET(req: NextRequest) {
       AND.push({ status: { in: statuses } })
     }
 
-    // User filter
+    // User filter (last editor)
     const userId = searchParams.get('userId')
     if (userId) {
-      AND.push({ lastEditedBy: userId })
+      AND.push({ lastEditorId: userId })
+    }
+
+    // Last editor filter
+    const lastEditorId = searchParams.get('lastEditorId')
+    if (lastEditorId) {
+      AND.push({ lastEditorId })
     }
 
     // Assigned to filter
     const assignedToUserId = searchParams.get('assignedToUserId')
     if (assignedToUserId) {
-      AND.push({
-        assignments: {
-          some: { userId: assignedToUserId }
-        }
-      })
+      if (assignedToUserId === 'unassigned') {
+        // Filter for sentences with no assignments
+        AND.push({
+          assignments: {
+            none: {}
+          }
+        })
+      } else {
+        AND.push({
+          assignments: {
+            some: { userId: assignedToUserId }
+          }
+        })
+      }
     }
 
     // Date range filter

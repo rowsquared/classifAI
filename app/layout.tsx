@@ -15,7 +15,15 @@ export const metadata = {
   title: 'classifai - Labeling Tool',
   description: 'Modern annotation tool for hierarchical taxonomies',
   icons: {
-    icon: '/favicon.svg',
+    icon: [
+      // ICO format for maximum compatibility (browsers will use this first)
+      { url: '/favicon.ico', sizes: 'any' },
+      // PNG formats for better browser support
+      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      // SVG for modern browsers that support it
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
   },
 }
 
