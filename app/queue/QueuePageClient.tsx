@@ -116,6 +116,7 @@ const DEFAULT_FILTERS: QueueFilters = {
   hasComments: null,
   hasSubmittedLabels: null,
   hasAISuggestions: null,
+  importId: null,
   supportFilters: {}
 }
 
@@ -220,6 +221,7 @@ export default function QueuePageClient({
       if (filters.hasAISuggestions !== null) params.set('hasAISuggestions', String(filters.hasAISuggestions))
       if (filters.flagged !== null) params.set('flagged', String(filters.flagged))
       if (filters.hasComments !== null) params.set('hasComments', String(filters.hasComments))
+      if (filters.importId) params.set('importId', filters.importId)
       
       // Support filters
       Object.entries(filters.supportFilters).forEach(([key, value]) => {
@@ -283,6 +285,7 @@ export default function QueuePageClient({
       if (filters.hasAISuggestions !== null) params.set('hasAISuggestions', String(filters.hasAISuggestions))
       if (filters.flagged !== null) params.set('flagged', String(filters.flagged))
       if (filters.hasComments !== null) params.set('hasComments', String(filters.hasComments))
+      if (filters.importId) params.set('importId', filters.importId)
       
       // Support filters
       Object.entries(filters.supportFilters).forEach(([key, value]) => {

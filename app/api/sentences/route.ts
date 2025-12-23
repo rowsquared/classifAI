@@ -36,6 +36,7 @@ export async function GET(request: Request) {
     const hasComments = searchParams.get('hasComments') || ''
     const hasSubmittedLabels = searchParams.get('hasSubmittedLabels') || ''
     const hasAISuggestions = searchParams.get('hasAISuggestions') || ''
+    const importId = searchParams.get('importId') || ''
     const sort = searchParams.get('sort') || 'createdAt'
     const order = searchParams.get('order') || 'asc'
     const page = parseInt(searchParams.get('page') || '1', 10)
@@ -273,6 +274,11 @@ export async function GET(request: Request) {
           none: {} 
         } 
       })
+    }
+    
+    // Import file filter
+    if (importId) {
+      where.AND!.push({ importId })
     }
     
     // Support column filters (dynamic)

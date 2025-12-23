@@ -142,6 +142,7 @@ export async function GET(req: NextRequest) {
     const aiConfidenceMax = searchParams.get('aiConfidenceMax')
     const hasSubmittedLabels = searchParams.get('hasSubmittedLabels')
     const hasAISuggestions = searchParams.get('hasAISuggestions')
+    const importId = searchParams.get('importId')
 
     if (taxonomyKey || level || code || source) {
       const annotationFilter: any = {
@@ -243,6 +244,11 @@ export async function GET(req: NextRequest) {
           }
         })
       }
+    }
+
+    // Import file filter
+    if (importId) {
+      AND.push({ importId })
     }
 
     // Support column filters (dynamic)

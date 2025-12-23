@@ -26,6 +26,7 @@ export type QueueFilters = {
   hasComments: boolean | null
   hasSubmittedLabels: boolean | null
   hasAISuggestions: boolean | null
+  importId: string | null
   supportFilters: Record<string, string>
 }
 
@@ -44,6 +45,7 @@ export const countActiveFilters = (filters: QueueFilters): number => {
     (filters.aiConfidenceMax !== null ? 1 : 0) +
     (filters.hasSubmittedLabels !== null ? 1 : 0) +
     (filters.hasAISuggestions !== null ? 1 : 0) +
+    (filters.importId ? 1 : 0) +
     (filters.status.length ? 1 : 0) +
     Object.keys(filters.supportFilters).filter(k => filters.supportFilters[k]).length
   )
@@ -66,6 +68,14 @@ type NodeOption = {
   level: number
 }
 
+type ImportFile = {
+  id: string
+  fileName: string
+  uploadedAt: string
+  totalRows: number
+  sentenceCount: number
+}
+
 export default function FilterPanel({
   collapsed,
   onToggle,
@@ -80,12 +90,34 @@ export default function FilterPanel({
     ...filters,
     lastEditorId: filters.lastEditorId || null
   })
+  const [imports, setImports] = useState<ImportFile[]>([])
+  const [loadingImports, setLoadingImports] = useState(false)
+  
   useEffect(() => {
     setLocalFilters({
       ...filters,
       lastEditorId: filters.lastEditorId || null
     })
   }, [filters])
+  
+  // Fetch imports on mount
+  useEffect(() => {
+    const fetchImports = async () => {
+      try {
+        setLoadingImports(true)
+        const res = await fetch('/api/imports')
+        const data = await res.json()
+        if (data.ok && data.imports) {
+          setImports(data.imports)
+        }
+      } catch (error) {
+        console.error('Failed to fetch imports:', error)
+      } finally {
+        setLoadingImports(false)
+      }
+    }
+    fetchImports()
+  }, [])
   const unknownOptions = useMemo(() => {
     return Object.entries(UNKNOWN_NODE_CODES).map(([lvl, code]) => {
       const levelNumber = Number(lvl)
@@ -302,6 +334,7 @@ export default function FilterPanel({
       hasComments: null,
       hasSubmittedLabels: null,
       hasAISuggestions: null,
+      importId: null,
       supportFilters: {}
     }
     setLocalFilters(emptyFilters)
@@ -446,6 +479,27 @@ export default function FilterPanel({
             </select>
           </div>
         )}
+
+        {/* Import File */}
+        <div>
+          <h3 className="text-sm font-medium text-gray-700 mb-2">Import File</h3>
+          <select
+            value={localFilters.importId || ''}
+            onChange={(e) => setLocalFilters(prev => ({
+              ...prev,
+              importId: e.target.value || null
+            }))}
+            className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${getFieldClasses(Boolean(localFilters.importId))}`}
+            disabled={loadingImports}
+          >
+            <option value="">All imports</option>
+            {imports.map(imp => (
+              <option key={imp.id} value={imp.id}>
+                {imp.fileName} ({imp.sentenceCount.toLocaleString()} sentences)
+              </option>
+            ))}
+          </select>
+        </div>
 
         {/* Date Range */}
         <div>
