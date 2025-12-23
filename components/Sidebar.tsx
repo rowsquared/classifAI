@@ -184,7 +184,7 @@ export default function Sidebar() {
   } : null
 
   // TODO: Make this configurable from admin page
-  const surveyTitle = 'r2 Labelling' // Can be set to e.g., 'HIES 2015'
+  const surveyTitle = 'classifAI' // Can be set to e.g., 'HIES 2015'
 
   const visibleNavItems = user ? navItems.filter(item => item.roles.includes(user.role)) : []
 

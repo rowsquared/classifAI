@@ -203,7 +203,7 @@ export default function LoginPage() {
               height={32}
               className="h-8 w-8"
             />
-            <h1 className="text-xl font-semibold text-gray-900">r2 Labelling</h1>
+            <h1 className="text-xl font-semibold text-gray-900">classifAI</h1>
           </div>
 
           {/* Sign in heading - left aligned */}
