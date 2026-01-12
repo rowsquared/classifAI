@@ -28,13 +28,7 @@ export async function GET(
         },
         assignments: {
           select: {
-            user: {
-              select: {
-                id: true,
-                username: true,
-                name: true
-              }
-            }
+            userId: true
           }
         },
         _count: {

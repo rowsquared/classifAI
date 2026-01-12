@@ -335,14 +335,17 @@ export default function SentenceRow({
       {showAssignedTo && (
         <td className="px-4 py-3 whitespace-nowrap">
           {sentence.assignments && sentence.assignments.length > 0 ? (
-            // For backwards compatibility, show only the first assignment
-            // (in case there are multiple assignments from before the single-assignment change)
-            <span 
-              className={`text-xs px-2 py-0.5 rounded ${getUserColor(sentence.assignments[0].user.username)}`}
-              title={sentence.assignments[0].user.name || sentence.assignments[0].user.username}
-            >
-              {sentence.assignments[0].user.username}
-            </span>
+            <div className="flex flex-wrap gap-1">
+              {sentence.assignments.map((assignment, idx) => (
+                <span 
+                  key={idx}
+                  className={`text-xs px-2 py-0.5 rounded ${getUserColor(assignment.user.username)}`}
+                  title={assignment.user.name || assignment.user.username}
+                >
+                  {assignment.user.username}
+                </span>
+              ))}
+            </div>
           ) : (
             <span className="text-gray-400 text-sm">—</span>
           )}

@@ -282,3 +282,4 @@ The Team Management page is **complete and functional**. Administrators can now:
 2. Visibility filters based on assignments and supervision
 
 These will be implemented next to fully integrate the user system with the labeling workflow.
+
