@@ -5,7 +5,7 @@ import { z } from 'zod'
 
 const assignSchema = z.object({
   sentenceIds: z.array(z.string()).min(1),
-  userIds: z.array(z.string()).min(1)
+  userId: z.string().nullable() // Single userId or null to unassign
 })
 
 export async function POST(req: NextRequest) {
@@ -30,78 +30,86 @@ export async function POST(req: NextRequest) {
       }, { status: 400 })
     }
 
-    const { sentenceIds, userIds } = validation.data
+    const { sentenceIds, userId } = validation.data
 
-    // For supervisors, verify they can only assign to users they supervise
-    if (session.user.role === 'supervisor') {
-      // Get all users this supervisor can assign to (direct labellers + supervised supervisors' labellers)
-      const supervisor = await prisma.user.findUnique({
-        where: { id: session.user.id },
-        include: {
-          labellers: {
-            include: {
-              labellers: true // Nested - get labellers of supervised supervisors
+    // If userId is provided, verify permissions
+    if (userId !== null) {
+      // For supervisors, verify they can only assign to users they supervise
+      if (session.user.role === 'supervisor') {
+        // Get all users this supervisor can assign to (direct labellers + supervised supervisors' labellers)
+        const supervisor = await prisma.user.findUnique({
+          where: { id: session.user.id },
+          include: {
+            labellers: {
+              include: {
+                labellers: true // Nested - get labellers of supervised supervisors
+              }
             }
           }
+        })
+
+        if (!supervisor) {
+          return NextResponse.json({ error: 'Supervisor not found' }, { status: 404 })
+        }
+
+        // Build list of assignable user IDs
+        const assignableUserIds = new Set<string>([session.user.id]) // Can assign to self
+        supervisor.labellers.forEach(labeller => {
+          assignableUserIds.add(labeller.id)
+          // Add nested labellers (if this labeller is also a supervisor)
+          labeller.labellers.forEach(nestedLabeller => {
+            assignableUserIds.add(nestedLabeller.id)
+          })
+        })
+
+        // Check if the requested userId is assignable
+        if (!assignableUserIds.has(userId)) {
+          return NextResponse.json({ 
+            error: 'Cannot assign to users you do not supervise' 
+          }, { status: 403 })
+        }
+      }
+
+      // Verify user exists
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true }
+      })
+
+      if (!user) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 })
+      }
+    }
+
+    // Use transaction to:
+    // 1. Remove all existing assignments for these sentences (backwards compatible cleanup)
+    // 2. Create new single assignment if userId provided
+    await prisma.$transaction(async (tx) => {
+      // Step 1: Remove all existing assignments for these sentences
+      await tx.sentenceAssignment.deleteMany({
+        where: {
+          sentenceId: { in: sentenceIds }
         }
       })
 
-      if (!supervisor) {
-        return NextResponse.json({ error: 'Supervisor not found' }, { status: 404 })
-      }
-
-      // Build list of assignable user IDs
-      const assignableUserIds = new Set<string>([session.user.id]) // Can assign to self
-      supervisor.labellers.forEach(labeller => {
-        assignableUserIds.add(labeller.id)
-        // Add nested labellers (if this labeller is also a supervisor)
-        labeller.labellers.forEach(nestedLabeller => {
-          assignableUserIds.add(nestedLabeller.id)
-        })
-      })
-
-      // Check all requested userIds are assignable
-      const invalidUsers = userIds.filter(id => !assignableUserIds.has(id))
-      if (invalidUsers.length > 0) {
-        return NextResponse.json({ 
-          error: 'Cannot assign to users you do not supervise' 
-        }, { status: 403 })
-      }
-    }
-
-    // Create assignments (using upsert to handle duplicates gracefully)
-    const assignments = []
-    for (const sentenceId of sentenceIds) {
-      for (const userId of userIds) {
-        assignments.push({
-          sentenceId,
-          userId,
-          assignedBy: session.user.id
+      // Step 2: If userId provided, create new single assignment
+      if (userId !== null) {
+        await tx.sentenceAssignment.createMany({
+          data: sentenceIds.map(sentenceId => ({
+            sentenceId,
+            userId,
+            assignedBy: session.user.id
+          })),
+          skipDuplicates: true
         })
       }
-    }
-
-    // Use transaction to create all assignments
-    await prisma.$transaction(
-      assignments.map(assignment =>
-        prisma.sentenceAssignment.upsert({
-          where: {
-            sentenceId_userId: {
-              sentenceId: assignment.sentenceId,
-              userId: assignment.userId
-            }
-          },
-          create: assignment,
-          update: {} // If exists, do nothing
-        })
-      )
-    )
+    })
 
     return NextResponse.json({ 
       ok: true, 
-      assigned: assignments.length,
-      sentences: sentenceIds.length,
-      users: userIds.length
+      assigned: userId !== null ? sentenceIds.length : 0,
+      unassigned: userId === null ? sentenceIds.length : 0,
+      sentences: sentenceIds.length
     })
   } catch (error) {
     console.error('Error assigning sentences:', error)

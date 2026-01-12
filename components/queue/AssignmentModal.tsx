@@ -19,14 +19,22 @@ type AssignmentModalProps = {
 export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: AssignmentModalProps) {
   const { data: session } = useSession()
   const [users, setUsers] = useState<User[]>([])
-  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null) // Single user or null for unassign
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [loadingAssignments, setLoadingAssignments] = useState(true)
 
   useEffect(() => {
-    fetchUsers()
-  }, [])
+    const loadData = async () => {
+      setLoading(true)
+      setLoadingAssignments(true)
+      await Promise.all([fetchUsers(), fetchCurrentAssignments()])
+      setLoading(false)
+      setLoadingAssignments(false)
+    }
+    loadData()
+  }, [sentenceIds])
 
   const fetchUsers = async () => {
     try {
@@ -38,35 +46,32 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
     } catch (error) {
       console.error('Failed to fetch users:', error)
       setError('Failed to load users')
-    } finally {
-      setLoading(false)
     }
   }
 
-  const handleToggleUser = (userId: string) => {
-    const newSet = new Set(selectedUserIds)
-    if (newSet.has(userId)) {
-      newSet.delete(userId)
-    } else {
-      newSet.add(userId)
-    }
-    setSelectedUserIds(newSet)
-  }
-
-  const handleSelectAll = () => {
-    if (selectedUserIds.size === users.length) {
-      setSelectedUserIds(new Set())
-    } else {
-      setSelectedUserIds(new Set(users.map(u => u.id)))
+  const fetchCurrentAssignments = async () => {
+    try {
+      // Fetch assignments for the first sentence to determine current assignment
+      // For backwards compatibility, if multiple assignments exist, we'll use the first one
+      if (sentenceIds.length === 0) return
+      
+      const res = await fetch(`/api/sentences/${sentenceIds[0]}`)
+      if (res.ok) {
+        const data = await res.json()
+        // Get the first assignment if any exist (backwards compatible with multiple assignments)
+        if (data.assignments && data.assignments.length > 0 && data.assignments[0].user?.id) {
+          setSelectedUserId(data.assignments[0].user.id)
+        } else {
+          setSelectedUserId(null) // No assignment
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch current assignments:', error)
+      // Don't set error here, just proceed without pre-selection
     }
   }
 
   const handleAssign = async () => {
-    if (selectedUserIds.size === 0) {
-      setError('Please select at least one user')
-      return
-    }
-
     setSubmitting(true)
     setError('')
 
@@ -76,7 +81,7 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sentenceIds,
-          userIds: Array.from(selectedUserIds)
+          userId: selectedUserId // Single userId or null to unassign
         })
       })
 
@@ -147,28 +152,40 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
           </div>
         ) : (
           <>
-            {/* Select All */}
-            <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-200">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selectedUserIds.size === assignableUsers.length && assignableUsers.length > 0}
-                  onChange={handleSelectAll}
-                  className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
-                />
-                <span className="text-sm font-medium text-gray-700">
-                  Select All ({assignableUsers.length} users)
-                </span>
-              </label>
-              {selectedUserIds.size > 0 && (
-                <span className="text-sm text-gray-600">
-                  {selectedUserIds.size} selected
-                </span>
-              )}
+            {/* Info text */}
+            <div className="mb-3 pb-3 border-b border-gray-200">
+              <p className="text-sm text-gray-600">
+                Select one user to assign to, or choose "Unassign" to remove assignment
+              </p>
             </div>
 
-            {/* User List */}
+            {/* User List with Radio Buttons */}
             <div className="flex-1 overflow-y-auto space-y-2">
+              {/* Unassign Option */}
+              <label
+                className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg cursor-pointer border border-transparent hover:border-gray-200 transition-colors"
+              >
+                <input
+                  type="radio"
+                  name="assignment"
+                  value=""
+                  checked={selectedUserId === null}
+                  onChange={() => setSelectedUserId(null)}
+                  className="w-4 h-4 border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-900">
+                      Unassign
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">
+                      Remove assignment
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-600">No user will be assigned to these sentences</div>
+                </div>
+              </label>
+
               {assignableUsers.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   No users available for assignment
@@ -180,10 +197,12 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
                     className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg cursor-pointer border border-transparent hover:border-gray-200 transition-colors"
                   >
                     <input
-                      type="checkbox"
-                      checked={selectedUserIds.has(user.id)}
-                      onChange={() => handleToggleUser(user.id)}
-                      className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
+                      type="radio"
+                      name="assignment"
+                      value={user.id}
+                      checked={selectedUserId === user.id}
+                      onChange={() => setSelectedUserId(user.id)}
+                      className="w-4 h-4 border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
                     />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -212,10 +231,14 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
               </button>
               <button
                 onClick={handleAssign}
-                disabled={submitting || selectedUserIds.size === 0}
+                disabled={submitting || loadingAssignments}
                 className="flex-1 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
-                {submitting ? 'Assigning...' : `Assign to ${selectedUserIds.size} ${selectedUserIds.size === 1 ? 'User' : 'Users'}`}
+                {submitting 
+                  ? 'Processing...' 
+                  : selectedUserId === null 
+                    ? 'Unassign' 
+                    : `Assign to ${assignableUsers.find(u => u.id === selectedUserId)?.name || 'User'}`}
               </button>
             </div>
           </>
