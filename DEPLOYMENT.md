@@ -1,0 +1,100 @@
+# Deployment Guide
+
+This guide covers production deployment for classifAI. The app provides the UI and database for classification workflows. AI labeling and learning are optional and come from the separate Taxomind service.
+
+## Prerequisites
+
+- Docker (and Docker Compose) or a container platform
+- PostgreSQL 12+
+- A domain with HTTPS (recommended for production)
+- Environment variables (see below)
+
+## Option 1: Docker Compose (app + Postgres)
+
+Use this when you want the app and database deployed together.
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/classifai.git
+cd classifai
+```
+
+2. Copy the environment template and set secure values:
+```bash
+cp .env.example .env
+```
+
+3. Start the stack:
+```bash
+docker compose up -d --build
+```
+
+4. Open your domain or http://localhost:3000, log in, and change the default admin password.
+
+Note: For local access you must expose port 3000 in `docker-compose.yml`. For production behind a reverse proxy, you can keep ports internal and route traffic through your proxy.
+
+## Option 2: App container + external Postgres
+
+Use this when you already manage PostgreSQL elsewhere.
+
+1. Set `DATABASE_URL` to point at your Postgres instance.
+2. Provide all required auth and admin environment variables.
+3. Ensure the container start command runs migrations and initializes the admin user:
+
+```bash
+sh -c "npx prisma migrate deploy && node scripts/init-admin.js && node server.js"
+```
+
+The default Dockerfile runs `node server.js` only, so you must override the start command in your platform (Kubernetes, ECS, Fly.io, etc.).
+
+## Environment Variables
+
+Required:
+- DATABASE_URL
+- AUTH_URL
+- AUTH_TRUST_HOST
+- NEXTAUTH_URL
+- NEXTAUTH_SECRET
+- DEFAULT_ADMIN_EMAIL
+- DEFAULT_ADMIN_PASSWORD
+- DEFAULT_ADMIN_NAME
+
+Optional AI labeling (Taxomind service):
+- AI_LABELING_API_URL
+- AI_LABELING_API_KEY
+- AI_LABELING_BATCH_SIZE
+- AI_LEARNING_BATCH_SIZE
+- AI_LEARNING_MIN_NEW_ANNOTATIONS
+- AI_JOB_POLL_INTERVAL_MS
+- AI_JOB_POLL_TIMEOUT_MS
+
+See `ENV_SETUP.md` for details.
+
+## Health Check
+
+Use the health endpoint to verify the deployment:
+
+```
+GET /api/health
+```
+
+## Admin User
+
+On first start, the default admin user is created from the environment variables. You must change the password after the first login. To reset, update `DEFAULT_ADMIN_PASSWORD` and restart the app.
+
+## Backups
+
+Back up your PostgreSQL database regularly. Example with Docker:
+
+```bash
+docker exec classifai-postgres pg_dump -U classifai classifai > backup.sql
+```
+
+## Troubleshooting
+
+- **Database does not exist**: Ensure the database is created and the name matches `DATABASE_URL`.
+- **AI labeling returns 404**: Verify `AI_LABELING_API_URL` points to the Taxomind service base path.
+
+## Platform Notes
+
+For Coolify-specific instructions, see `COOLIFY_DEPLOYMENT.md`.

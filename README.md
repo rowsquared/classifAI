@@ -1,36 +1,32 @@
-# classifai - AI-Assisted Labeling Tool
+# classifAI
 
-A modern, responsive web application for hierarchical data labeling with optional AI pre-classification support.
+Complex classifications made easy.
 
-## Features
+Open-source. AI-assisted. User-friendly.
+Built for ISCO, ISIC, COICOP, and beyond.
 
-- **Multi-level Taxonomy Management**: Import and manage hierarchical taxonomies up to 5 levels deep
-- **Sentence Labeling Interface**: Split-view interface with intuitive navigation and search
-- **AI Pre-classification Support**: Optional AI predictions with confidence scores
-- **User Management**: Role-based access control (Admin, Supervisor, Labeller)
-- **Progress Tracking**: Detailed metrics and performance analytics
-- **Batch Operations**: Bulk labeling, assignment, and editing
-- **Comments & Flags**: Add context and mark items for review
-- **Responsive Design**: Works seamlessly on desktop and mobile
-- **Dark/Light Mode**: System-aware theming
+classifAI is an open-source labeling platform for hierarchical classifications. It provides the user interface and database for classification workflows.
+AI labeling and learning are handled by the separate Taxomind service (https://github.com/rowsquared/taxomind). You can run classifAI without AI and connect it later.
 
-## Tech Stack
+## Why classifAI
 
-- **Frontend**: Next.js 15, React 19, TypeScript, Tailwind CSS
-- **Backend**: Next.js API Routes
-- **Database**: PostgreSQL with Prisma ORM
-- **Authentication**: NextAuth.js v5
-- **State Management**: Zustand, TanStack Query
-- **Charts**: Recharts
+- Faster classifications with AI-assisted suggestions reviewed by humans
+- Higher quality with review and double-annotation workflows
+- Simple process management with assignments and progress tracking
+- Open-source and self-hosted so you stay in control
 
-## Getting Started
+## Highlights
 
-### Prerequisites
+- Multi-level taxonomies (up to 5 levels) with CSV import and custom level names
+- Fast labeling UI with search, keyboard shortcuts, flags, and comments
+- Optional AI suggestions and learning via Taxomind
+- Role-based access for admins, supervisors, and labellers
+- Progress analytics and team performance dashboards
+- Flexible workflows with assignments and sign-offs
 
-- Node.js 18+ (using pnpm package manager)
-- PostgreSQL 12+ database
+## Getting started
 
-### Installation
+The simplest way to try classifAI is with Docker Compose.
 
 1. Clone the repository:
 ```bash
@@ -38,204 +34,70 @@ git clone https://github.com/yourusername/classifai.git
 cd classifai
 ```
 
-2. Install dependencies:
-```bash
-pnpm install
-```
-
-3. Set up environment variables:
+2. Copy the environment template:
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your database credentials and secrets. See [ENV_SETUP.md](./ENV_SETUP.md) for detailed configuration.
-
-**Required variables:**
-```env
-DATABASE_URL="postgresql://user:password@localhost:5432/classifai"
-NEXTAUTH_SECRET="your-secret-here"  # Generate with: openssl rand -base64 32
-NEXTAUTH_URL="http://localhost:3000"
-DEFAULT_ADMIN_EMAIL="admin@example.com"
-DEFAULT_ADMIN_PASSWORD="change-this-immediately"
-```
-
-4. Set up the database:
+3. For local access, uncomment the app port mapping in `docker-compose.yml` (3000:3000).
+4. Optional: enable AI suggestions by deploying Taxomind and setting `AI_LABELING_API_URL` and `AI_LABELING_API_KEY` in `.env`.
+5. Start the stack:
 ```bash
-# Run migrations
-npx prisma migrate deploy
-
-# Generate Prisma client
-npx prisma generate
-
-# (Optional) Create initial admin user if not auto-created
-npx tsx scripts/init-admin.ts
+docker compose up -d --build
 ```
+6. Open http://localhost:3000, log in with the default admin, and change the password.
 
-5. Start the development server:
-```bash
-pnpm dev
-```
+For hosted setup or a demo, see https://rowsquared.com/classifai/.
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+## Configuration
 
-### Initial Login
+Required:
+- DATABASE_URL
+- AUTH_URL
+- AUTH_TRUST_HOST
+- NEXTAUTH_URL
+- NEXTAUTH_SECRET
+- DEFAULT_ADMIN_EMAIL
+- DEFAULT_ADMIN_PASSWORD
+- DEFAULT_ADMIN_NAME
 
-The default admin user is created automatically on first run using the `DEFAULT_ADMIN_EMAIL` and `DEFAULT_ADMIN_PASSWORD` from your `.env` file.
+Optional AI labeling (Taxomind service):
+- AI_LABELING_API_URL
+- AI_LABELING_API_KEY
+- AI_LABELING_BATCH_SIZE
+- AI_LEARNING_BATCH_SIZE
+- AI_LEARNING_MIN_NEW_ANNOTATIONS
+- AI_JOB_POLL_INTERVAL_MS
+- AI_JOB_POLL_TIMEOUT_MS
 
-**Important:** Change the password immediately after first login!
+See `ENV_SETUP.md` for full details.
 
-## Production Deployment
+## First Login
 
-### Build for Production
+The default admin user is created on first run using `DEFAULT_ADMIN_EMAIL` and `DEFAULT_ADMIN_PASSWORD`. Change the password immediately after first login.
 
-```bash
-# Install dependencies
-pnpm install
+## FAQs
 
-# Generate Prisma client
-npx prisma generate
-
-# Run database migrations
-npx prisma migrate deploy
-
-# Build the application
-pnpm build
-```
-
-### Environment Variables for Production
-
-Ensure all environment variables are set in your production environment:
-
-- **DATABASE_URL**: Production PostgreSQL connection string
-- **NEXTAUTH_URL**: Your production domain (e.g., `https://yourdomain.com`)
-- **NEXTAUTH_SECRET**: Strong random secret (generate with `openssl rand -base64 32`)
-- **DEFAULT_ADMIN_EMAIL**: Admin email (change password after first login)
-- **DEFAULT_ADMIN_PASSWORD**: Strong initial password
-- **AI_LABELING_API_URL**: (Optional) External AI service URL
-- **AI_LABELING_API_KEY**: (Optional) API key for AI service
-
-### Running in Production
-
-```bash
-pnpm start
-```
-
-### Deployment Platforms
-
-#### Vercel
-
-1. Connect your repository to Vercel
-2. Set environment variables in Vercel dashboard
-3. Configure build command: `pnpm build`
-4. Configure output directory: `.next`
-5. Add PostgreSQL database (Vercel Postgres or external)
-
-#### Docker
-
-Create a `Dockerfile`:
-
-```dockerfile
-FROM node:18-alpine AS base
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-FROM base AS deps
-WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-
-FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-RUN pnpm build
-
-FROM base AS runner
-WORKDIR /app
-ENV NODE_ENV production
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/prisma ./prisma
-RUN npx prisma generate
-EXPOSE 3000
-CMD ["pnpm", "start"]
-```
-
-### Security Checklist
-
-- [ ] Change `NEXTAUTH_SECRET` to a strong random value
-- [ ] Change `DEFAULT_ADMIN_PASSWORD` to a strong password
-- [ ] Use strong database credentials
-- [ ] Enable HTTPS in production
-- [ ] Set secure cookie settings (handled by NextAuth in production)
-- [ ] Review and restrict CORS if needed
-- [ ] Set up database backups
-- [ ] Configure rate limiting (consider adding middleware)
-- [ ] Review file upload limits for CSV imports
-
-## Project Structure
-
-```
-classifai/
-├── app/                    # Next.js app router pages
-│   ├── api/               # API routes
-│   ├── admin/             # Admin pages (taxonomy, sentences, export, team)
-│   ├── progress/          # Progress tracking page
-│   ├── queue/             # Sentence queue and labeling interface
-│   └── login/             # Authentication
-├── components/            # React components
-├── lib/                   # Utilities and configurations
-├── prisma/               # Database schema and migrations
-├── public/               # Static assets
-├── scripts/              # Database and setup scripts
-└── styles/               # Global styles
-```
-
-## Key Features
-
-### Taxonomy Management
-- Import CSV files with hierarchical taxonomy structure
-- Support for up to 3 active taxonomies
-- Custom level names (e.g., "Major", "Minor", "Unit Group")
-- Soft delete and restore functionality
-
-### Labeling Interface
-- Real-time search across all taxonomy levels
-- Breadcrumb navigation with clickable chips
-- Keyboard shortcuts for efficiency
-- Flag and comment support
-- Unknown label option
-
-### User Management
-- Role-based permissions (Admin, Supervisor, Labeller)
-- Hierarchical supervision structure
-- Sentence assignment workflow
-- Password reset functionality
-
-### Progress Analytics
-- Completion rate tracking
-- AI agreement metrics
-- Time to label (median)
-- Unknown rate by level
-- Daily activity charts
-- Team performance dashboard (for supervisors)
+- **What is classifAI?** An open-source, AI-assisted platform for hierarchical classifications and labeling.
+- **How much does it cost and where can I find it?** It is open-source and free to use. You can self-host from this repository, or request hosted setup via https://rowsquared.com/classifai/.
+- **Do I need data scientists or technical expertise to use it?** No. It is designed for domain experts and field teams, not data scientists.
+- **Can I trust the AI predictions?** AI suggestions are optional and are always reviewed by humans. Corrections improve model quality over time.
+- **Where does my data go?** With self-hosting, your data stays on your infrastructure. If you enable AI suggestions, data is sent to your Taxomind service.
+- **What classification systems does it support?** Built for ISCO, ISIC, COICOP, and beyond.
+- **How does it integrate with my workflow and can I customize it?** Use flexible assignments, filters, comments, and flags. The project is open-source and can be customized.
+- **What kind of support do you offer?** We can help with setup, integration, and custom features. See https://rowsquared.com/classifai/ for more info.
 
 ## Documentation
 
-- [Setup Instructions](./SETUP_INSTRUCTIONS.md)
-- [Authentication System](./AUTH_IMPLEMENTATION_SUMMARY.md)
-- [Team Management](./TEAM_MANAGEMENT_SUMMARY.md)
-- [Environment Setup](./ENV_SETUP.md)
-
-## Contributing
-
-This is a private project. Contact the maintainers for access.
+- ENV_SETUP.md
+- DEVELOPMENT.md
+- DEPLOYMENT.md
+- COOLIFY_DEPLOYMENT.md
 
 ## License
 
-Private - All Rights Reserved
+MIT. See `LICENSE`.
 
 ## Support
 
-For issues or questions, please contact the development team.
-
+Open a GitHub issue for bugs or feature requests.
