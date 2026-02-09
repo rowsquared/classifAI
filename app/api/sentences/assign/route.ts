@@ -8,6 +8,53 @@ const assignSchema = z.object({
   userIds: z.array(z.string()).min(1)
 })
 
+// GET - Fetch current assignments for given sentence IDs
+export async function GET(req: NextRequest) {
+  try {
+    const session = await auth()
+
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    if (session.user.role !== 'admin' && session.user.role !== 'supervisor') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const sentenceIdsParam = req.nextUrl.searchParams.get('sentenceIds')
+    if (!sentenceIdsParam) {
+      return NextResponse.json({ error: 'sentenceIds parameter required' }, { status: 400 })
+    }
+
+    const sentenceIds = sentenceIdsParam.split(',').filter(Boolean)
+    if (sentenceIds.length === 0) {
+      return NextResponse.json({ error: 'No sentence IDs provided' }, { status: 400 })
+    }
+
+    const assignments = await prisma.sentenceAssignment.findMany({
+      where: { sentenceId: { in: sentenceIds } },
+      select: {
+        sentenceId: true,
+        userId: true
+      }
+    })
+
+    // Return a map of userId -> list of sentenceIds they're assigned to
+    const userAssignments: Record<string, string[]> = {}
+    for (const a of assignments) {
+      if (!userAssignments[a.userId]) {
+        userAssignments[a.userId] = []
+      }
+      userAssignments[a.userId].push(a.sentenceId)
+    }
+
+    return NextResponse.json({ ok: true, userAssignments })
+  } catch (error) {
+    console.error('Error fetching assignments:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await auth()

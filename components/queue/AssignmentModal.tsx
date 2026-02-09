@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 
 type User = {
@@ -20,24 +20,46 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
   const { data: session } = useSession()
   const [users, setUsers] = useState<User[]>([])
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
+  const [initialUserIds, setInitialUserIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const initialised = useRef(false)
 
   useEffect(() => {
-    fetchUsers()
+    if (!initialised.current) {
+      initialised.current = true
+      loadData()
+    }
   }, [])
 
-  const fetchUsers = async () => {
+  const loadData = async () => {
     try {
-      const res = await fetch('/api/users')
-      if (res.ok) {
-        const data = await res.json()
-        setUsers(data.users)
+      // Fetch users and current assignments in parallel
+      const [usersRes, assignRes] = await Promise.all([
+        fetch('/api/users'),
+        fetch(`/api/sentences/assign?sentenceIds=${sentenceIds.join(',')}`)
+      ])
+
+      if (usersRes.ok) {
+        const usersData = await usersRes.json()
+        setUsers(usersData.users)
+      } else {
+        setError('Failed to load users')
       }
-    } catch (error) {
-      console.error('Failed to fetch users:', error)
-      setError('Failed to load users')
+
+      if (assignRes.ok) {
+        const assignData = await assignRes.json()
+        // userAssignments is { userId: [sentenceId, ...] }
+        const currentlyAssigned = new Set<string>(
+          Object.keys(assignData.userAssignments || {})
+        )
+        setSelectedUserIds(currentlyAssigned)
+        setInitialUserIds(currentlyAssigned)
+      }
+    } catch (err) {
+      console.error('Failed to load data:', err)
+      setError('Failed to load data')
     } finally {
       setLoading(false)
     }
@@ -53,45 +75,68 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
     setSelectedUserIds(newSet)
   }
 
-  const handleSelectAll = () => {
-    if (selectedUserIds.size === users.length) {
+  const handleSelectAll = (assignableUsers: User[]) => {
+    if (selectedUserIds.size === assignableUsers.length && assignableUsers.length > 0) {
       setSelectedUserIds(new Set())
     } else {
-      setSelectedUserIds(new Set(users.map(u => u.id)))
+      setSelectedUserIds(new Set(assignableUsers.map(u => u.id)))
     }
   }
 
-  const handleAssign = async () => {
-    if (selectedUserIds.size === 0) {
-      setError('Please select at least one user')
-      return
-    }
-
+  const handleSave = async () => {
     setSubmitting(true)
     setError('')
 
     try {
-      const res = await fetch('/api/sentences/assign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sentenceIds,
-          userIds: Array.from(selectedUserIds)
-        })
-      })
+      // Compute diff
+      const toAdd = Array.from(selectedUserIds).filter(id => !initialUserIds.has(id))
+      const toRemove = Array.from(initialUserIds).filter(id => !selectedUserIds.has(id))
 
-      const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.error || 'Failed to assign sentences')
-        setSubmitting(false)
+      // Nothing changed
+      if (toAdd.length === 0 && toRemove.length === 0) {
+        onClose()
         return
+      }
+
+      const promises: Promise<Response>[] = []
+
+      // Add new assignments
+      if (toAdd.length > 0) {
+        promises.push(
+          fetch('/api/sentences/assign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sentenceIds, userIds: toAdd })
+          })
+        )
+      }
+
+      // Remove assignments
+      if (toRemove.length > 0) {
+        promises.push(
+          fetch('/api/sentences/assign', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sentenceIds, userIds: toRemove })
+          })
+        )
+      }
+
+      const results = await Promise.all(promises)
+
+      for (const res of results) {
+        if (!res.ok) {
+          const data = await res.json()
+          setError(data.error || 'Failed to update assignments')
+          setSubmitting(false)
+          return
+        }
       }
 
       onSuccess()
       onClose()
-    } catch (error) {
-      console.error('Assignment error:', error)
+    } catch (err) {
+      console.error('Assignment error:', err)
       setError('An error occurred')
       setSubmitting(false)
     }
@@ -107,22 +152,35 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
   }
 
   // Filter users based on role permissions
-  const assignableUsers = session?.user?.role === 'admin' 
-    ? users 
+  const assignableUsers = session?.user?.role === 'admin'
+    ? users
     : users.filter(u => {
-        // Supervisors can only assign to themselves or their supervised users
-        // This is a simplified filter - the API will do the full validation
         return u.role === 'labeller' || u.id === session?.user?.id
       })
+
+  // Compute diff for button label
+  const toAdd = Array.from(selectedUserIds).filter(id => !initialUserIds.has(id))
+  const toRemove = Array.from(initialUserIds).filter(id => !selectedUserIds.has(id))
+  const hasChanges = toAdd.length > 0 || toRemove.length > 0
+
+  const getButtonLabel = () => {
+    if (submitting) return 'Saving...'
+    if (!hasChanges) return 'No changes'
+
+    const parts: string[] = []
+    if (toAdd.length > 0) parts.push(`assign ${toAdd.length}`)
+    if (toRemove.length > 0) parts.push(`unassign ${toRemove.length}`)
+    return parts.join(', ').replace(/^./, c => c.toUpperCase())
+  }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col">
         <div className="flex justify-between items-center mb-4">
           <div>
-            <h2 className="text-xl font-bold text-gray-900">Assign Sentences</h2>
+            <h2 className="text-xl font-bold text-gray-900">Manage Assignments</h2>
             <p className="text-sm text-gray-600 mt-1">
-              Assign {sentenceIds.length} {sentenceIds.length === 1 ? 'sentence' : 'sentences'} to users
+              {sentenceIds.length} {sentenceIds.length === 1 ? 'sentence' : 'sentences'} selected
             </p>
           </div>
           <button
@@ -143,7 +201,7 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
 
         {loading ? (
           <div className="flex-1 flex items-center justify-center py-12">
-            <div className="text-gray-500">Loading users...</div>
+            <div className="text-gray-500">Loading...</div>
           </div>
         ) : (
           <>
@@ -153,18 +211,21 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
                 <input
                   type="checkbox"
                   checked={selectedUserIds.size === assignableUsers.length && assignableUsers.length > 0}
-                  onChange={handleSelectAll}
+                  onChange={() => handleSelectAll(assignableUsers)}
                   className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
                 />
                 <span className="text-sm font-medium text-gray-700">
                   Select All ({assignableUsers.length} users)
                 </span>
               </label>
-              {selectedUserIds.size > 0 && (
-                <span className="text-sm text-gray-600">
-                  {selectedUserIds.size} selected
-                </span>
-              )}
+              <div className="flex items-center gap-3 text-sm text-gray-600">
+                {selectedUserIds.size > 0 && (
+                  <span>{selectedUserIds.size} selected</span>
+                )}
+                {initialUserIds.size > 0 && (
+                  <span className="text-gray-400">({initialUserIds.size} currently assigned)</span>
+                )}
+              </div>
             </div>
 
             {/* User List */}
@@ -174,30 +235,48 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
                   No users available for assignment
                 </div>
               ) : (
-                assignableUsers.map(user => (
-                  <label
-                    key={user.id}
-                    className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg cursor-pointer border border-transparent hover:border-gray-200 transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedUserIds.has(user.id)}
-                      onChange={() => handleToggleUser(user.id)}
-                      className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-900">
-                          {user.name || 'Unnamed User'}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${getRoleBadgeColor(user.role)}`}>
-                          {user.role}
-                        </span>
+                assignableUsers.map(user => {
+                  const isSelected = selectedUserIds.has(user.id)
+                  const wasInitial = initialUserIds.has(user.id)
+                  // Visual cue: green border for newly added, red border for to-be-removed
+                  let borderClass = 'border border-transparent'
+                  if (isSelected && !wasInitial) {
+                    borderClass = 'border border-green-300 bg-green-50'
+                  } else if (!isSelected && wasInitial) {
+                    borderClass = 'border border-red-300 bg-red-50'
+                  }
+
+                  return (
+                    <label
+                      key={user.id}
+                      className={`flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors ${borderClass}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleToggleUser(user.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-0 cursor-pointer"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900">
+                            {user.name || 'Unnamed User'}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${getRoleBadgeColor(user.role)}`}>
+                            {user.role}
+                          </span>
+                          {isSelected && !wasInitial && (
+                            <span className="text-xs text-green-600 font-medium">+ adding</span>
+                          )}
+                          {!isSelected && wasInitial && (
+                            <span className="text-xs text-red-600 font-medium">- removing</span>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-600 truncate">{user.email}</div>
                       </div>
-                      <div className="text-sm text-gray-600 truncate">{user.email}</div>
-                    </div>
-                  </label>
-                ))
+                    </label>
+                  )
+                })
               )}
             </div>
 
@@ -211,11 +290,11 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
                 Cancel
               </button>
               <button
-                onClick={handleAssign}
-                disabled={submitting || selectedUserIds.size === 0}
+                onClick={handleSave}
+                disabled={submitting || !hasChanges}
                 className="flex-1 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
-                {submitting ? 'Assigning...' : `Assign to ${selectedUserIds.size} ${selectedUserIds.size === 1 ? 'User' : 'Users'}`}
+                {getButtonLabel()}
               </button>
             </div>
           </>
@@ -224,4 +303,3 @@ export default function AssignmentModal({ sentenceIds, onClose, onSuccess }: Ass
     </div>
   )
 }
-
