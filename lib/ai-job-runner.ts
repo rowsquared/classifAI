@@ -3,6 +3,9 @@ import { startAIJob, waitForAIJobResult } from './ai-labeling'
 import { AI_LABELING_BATCH_SIZE } from './constants'
 import { buildFieldMap } from './ai-utils'
 
+const MAX_BATCH_RETRIES = 3
+const BATCH_RETRY_DELAY_MS = 10_000 // 10 seconds between retries
+
 type FilterCriteria = {
   sentenceIds: string[]
   importIds?: string[]
@@ -12,7 +15,13 @@ type FilterCriteria = {
 
 const globalAny = globalThis as typeof globalThis & {
   __aiJobProcessorRunning?: boolean
+  __aiJobProcessorStartedAt?: number
 }
+
+// If the processor lock has been held for longer than this, consider it stale
+// and allow a new processor to start. This protects against zombie processors
+// from hot-reloads or unexpected hangs.
+const PROCESSOR_LOCK_STALE_MS = 30 * 60 * 1000 // 30 minutes
 
 async function processJobsLoop() {
   while (true) {
@@ -69,10 +78,16 @@ async function processJobsLoop() {
 
 export function triggerAILabelingProcessor() {
   if (globalAny.__aiJobProcessorRunning) {
-    // Processor is already running, it will pick up new jobs in its loop
-    return
+    // Check if the lock is stale (e.g. from a zombie processor after hot-reload)
+    const elapsed = Date.now() - (globalAny.__aiJobProcessorStartedAt || 0)
+    if (elapsed < PROCESSOR_LOCK_STALE_MS) {
+      // Processor is genuinely running, it will pick up new jobs in its loop
+      return
+    }
+    console.warn(`AI job processor lock is stale (held for ${Math.round(elapsed / 1000)}s), forcing restart`)
   }
   globalAny.__aiJobProcessorRunning = true
+  globalAny.__aiJobProcessorStartedAt = Date.now()
 
   ;(async () => {
     try {
@@ -90,8 +105,8 @@ export function triggerAILabelingProcessor() {
       })
       if (remainingJobs) {
         console.log('Retrying AI job processor after error...')
-        // Reset the flag and retry after a short delay
         globalAny.__aiJobProcessorRunning = false
+        globalAny.__aiJobProcessorStartedAt = undefined
         setTimeout(() => {
           triggerAILabelingProcessor()
         }, 1000)
@@ -99,6 +114,7 @@ export function triggerAILabelingProcessor() {
       }
     } finally {
       globalAny.__aiJobProcessorRunning = false
+      globalAny.__aiJobProcessorStartedAt = undefined
     }
   })()
 }
@@ -224,98 +240,132 @@ async function processSingleJob(jobId: string) {
       continue
     }
 
-    try {
-      const jobHandle = await startAIJob('/label', {
-        taxonomyKey: job.taxonomy.key,
-        batchId: `${job.id}-${Math.floor(offset / AI_LABELING_BATCH_SIZE)}`,
-        sentences: payloadSentences
-      })
-      const result = await waitForAIJobResult(jobHandle, `/label/${jobHandle}/status`)
-      if (!result.success) {
-        throw new Error(result.error || result.data?.error || 'AI labeling job failed')
-      }
-      const response = (result.data?.result || result.data) as {
-        suggestions?: Array<{
-          sentenceId?: string
-          sentence_id?: string
-          annotations: Array<{ level: number; nodeCode: string | number; confidence?: number }>
-        }>
-        errors?: Array<{ sentenceId?: string; sentence_id?: string; error?: string }>
-      }
+    const batchIndex = Math.floor(offset / AI_LABELING_BATCH_SIZE)
+    let batchSucceeded = false
 
-      const suggestionMap = new Map<string, { annotations: Array<{ level: number; nodeCode: string; confidence: number }> }>()
-      for (const suggestion of response.suggestions || []) {
-        const sentenceId = suggestion.sentenceId || suggestion.sentence_id
-        if (!sentenceId || !Array.isArray(suggestion.annotations)) continue
-        suggestionMap.set(
-          sentenceId,
-          {
-            annotations: (suggestion.annotations || []).map(a => ({
-              level: a.level,
-              nodeCode: String(a.nodeCode),
-              confidence: typeof a.confidence === 'number' ? a.confidence : 0
-            }))
+    for (let attempt = 1; attempt <= MAX_BATCH_RETRIES; attempt++) {
+      try {
+        const jobHandle = await startAIJob('/label', {
+          taxonomyKey: job.taxonomy.key,
+          batchId: `${job.id}-${batchIndex}`,
+          sentences: payloadSentences
+        })
+        const result = await waitForAIJobResult(jobHandle, `/label/${jobHandle}/status`)
+        if (!result.success) {
+          throw new Error(result.error || result.data?.error || 'AI labeling job failed')
+        }
+        const response = (result.data?.result || result.data) as {
+          suggestions?: Array<{
+            sentenceId?: string
+            sentence_id?: string
+            annotations: Array<{ level: number; nodeCode: string | number; confidence?: number }>
+          }>
+          errors?: Array<{ sentenceId?: string; sentence_id?: string; error?: string }>
+        }
+
+        const suggestionMap = new Map<string, { annotations: Array<{ level: number; nodeCode: string; confidence: number }> }>()
+        for (const suggestion of response.suggestions || []) {
+          const sentenceId = suggestion.sentenceId || suggestion.sentence_id
+          if (!sentenceId || !Array.isArray(suggestion.annotations)) continue
+          suggestionMap.set(
+            sentenceId,
+            {
+              annotations: (suggestion.annotations || []).map(a => ({
+                level: a.level,
+                nodeCode: String(a.nodeCode),
+                confidence: typeof a.confidence === 'number' ? a.confidence : 0
+              }))
+            }
+          )
+        }
+
+        await prisma.$transaction(async (tx) => {
+          for (const [sentenceId, data] of suggestionMap) {
+            await tx.sentenceAISuggestion.deleteMany({
+              where: {
+                sentenceId,
+                taxonomyId: job!.taxonomyId
+              }
+            })
+
+            if (data.annotations.length === 0) continue
+
+            await tx.sentenceAISuggestion.createMany({
+              data: data.annotations.map(ann => ({
+                sentenceId,
+                taxonomyId: job!.taxonomyId,
+                level: ann.level,
+                nodeCode: ann.nodeCode,
+                confidenceScore: ann.confidence
+              }))
+            })
           }
-        )
-      }
+        })
 
-      await prisma.$transaction(async (tx) => {
-        for (const [sentenceId, data] of suggestionMap) {
-          await tx.sentenceAISuggestion.deleteMany({
-            where: {
-              sentenceId,
-              taxonomyId: job!.taxonomyId
+        const errorIds = new Set(
+          (response.errors || [])
+            .map(e => e.sentenceId || e.sentence_id)
+            .filter((id): id is string => Boolean(id))
+        )
+
+        for (const id of batchIds) {
+          if (!suggestionMap.has(id)) {
+            errorIds.add(id)
+          }
+        }
+
+        failed += errorIds.size
+        processed += batchIds.length
+
+        await prisma.aILabelingJob.update({
+          where: { id: job.id },
+          data: {
+            processedSentences: processed,
+            failedSentences: failed
+          }
+        })
+
+        batchSucceeded = true
+        // Refresh the processor lock timestamp so long-running jobs
+        // don't appear stale
+        globalAny.__aiJobProcessorStartedAt = Date.now()
+        break // Batch succeeded, exit retry loop
+
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        console.warn(
+          `Batch ${batchIndex} of job ${job.id} failed (attempt ${attempt}/${MAX_BATCH_RETRIES}): ${errorMsg}`
+        )
+
+        if (attempt < MAX_BATCH_RETRIES) {
+          // Update job with a transient error note so the UI can show it
+          await prisma.aILabelingJob.update({
+            where: { id: job.id },
+            data: {
+              errorMessage: `Batch ${batchIndex} failed (attempt ${attempt}/${MAX_BATCH_RETRIES}), retrying...`
             }
           })
-
-          if (data.annotations.length === 0) continue
-
-          await tx.sentenceAISuggestion.createMany({
-            data: data.annotations.map(ann => ({
-              sentenceId,
-              taxonomyId: job!.taxonomyId,
-              level: ann.level,
-              nodeCode: ann.nodeCode,
-              confidenceScore: ann.confidence
-            }))
+          await new Promise(resolve => setTimeout(resolve, BATCH_RETRY_DELAY_MS))
+        } else {
+          // All retries exhausted — fail the entire job
+          await prisma.aILabelingJob.update({
+            where: { id: job.id },
+            data: {
+              status: 'failed',
+              errorMessage: `Batch ${batchIndex} failed after ${MAX_BATCH_RETRIES} attempts: ${errorMsg}`,
+              completedAt: new Date(),
+              processedSentences: processed,
+              failedSentences: failed
+            }
           })
-        }
-      })
-
-      const errorIds = new Set(
-        (response.errors || [])
-          .map(e => e.sentenceId || e.sentence_id)
-          .filter((id): id is string => Boolean(id))
-      )
-
-      for (const id of batchIds) {
-        if (!suggestionMap.has(id)) {
-          errorIds.add(id)
+          throw error
         }
       }
+    }
 
-      failed += errorIds.size
-      processed += batchIds.length
-
-      await prisma.aILabelingJob.update({
-        where: { id: job.id },
-        data: {
-          processedSentences: processed,
-          failedSentences: failed
-        }
-      })
-    } catch (error) {
-      await prisma.aILabelingJob.update({
-        where: { id: job.id },
-        data: {
-          status: 'failed',
-          errorMessage: error instanceof Error ? error.message : String(error),
-          completedAt: new Date(),
-          processedSentences: processed,
-          failedSentences: failed
-        }
-      })
-      throw error
+    if (!batchSucceeded) {
+      // Safety net — should not reach here due to throw above, but just in case
+      throw new Error(`Batch ${batchIndex} of job ${job.id} failed after all retries`)
     }
   }
 

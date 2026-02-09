@@ -436,8 +436,13 @@ export default function QueuePageClient({
     t.lastAISyncStatus !== 'completed' && t.lastAISyncStatus !== 'success'
   )
 
-  const waitForAIJobCompletion = async (jobId: string, taxonomyLabel: string) => {
-    const maxAttempts = 200 // ~10 minutes at 3s interval
+  const waitForAIJobCompletion = async (jobId: string, taxonomyLabel: string, sentenceCount: number) => {
+    // Dynamic timeout: ~2 min per 100 sentences (accounting for retries and overhead),
+    // with a minimum of 10 minutes and a generous buffer.
+    const pollIntervalMs = 3000
+    const estimatedMinutes = Math.max(10, Math.ceil(sentenceCount / 100) * 2.5 + 5)
+    const maxAttempts = Math.ceil((estimatedMinutes * 60 * 1000) / pollIntervalMs)
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const res = await fetch(`/api/ai-labeling/jobs/${jobId}`)
@@ -451,9 +456,9 @@ export default function QueuePageClient({
       } catch (error) {
         console.error(`Failed to fetch AI job status for ${taxonomyLabel}:`, error)
       }
-      await new Promise(resolve => setTimeout(resolve, 3000))
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs))
     }
-    throw new Error(`AI job for ${taxonomyLabel} timed out.`)
+    throw new Error(`AI job for ${taxonomyLabel} timed out after ~${estimatedMinutes} minutes.`)
   }
 
   const handleCancelPendingAIJobs = () => {
@@ -558,7 +563,7 @@ export default function QueuePageClient({
         }
 
         try {
-          await waitForAIJobCompletion(jobId, taxonomy.key)
+          await waitForAIJobCompletion(jobId, taxonomy.key, sentenceIdArray.length)
           // No toast messages - user can check button for status
         } catch (jobError) {
           console.error(jobError)

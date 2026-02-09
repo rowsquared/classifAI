@@ -6,6 +6,13 @@ import {
 const API_URL = process.env.AI_LABELING_API_URL
 const API_KEY = process.env.AI_LABELING_API_KEY
 
+// Timeout for individual HTTP requests to the external AI service.
+// POST requests (sending batches) get a longer timeout since the server
+// may take time to accept a large payload. GET requests (status polling)
+// should respond quickly.
+const AI_REQUEST_TIMEOUT_POST_MS = 3 * 60 * 1000 // 3 minutes
+const AI_REQUEST_TIMEOUT_GET_MS = 30 * 1000       // 30 seconds
+
 export function ensureAIConfig() {
   if (!API_URL || !API_KEY) {
     throw new Error('AI labeling service is not configured. Please set AI_LABELING_API_URL and AI_LABELING_API_KEY.')
@@ -15,21 +22,37 @@ export function ensureAIConfig() {
 async function requestAI<T = unknown>(path: string, options: RequestInit): Promise<T> {
   ensureAIConfig()
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${API_KEY}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
+  const method = (options.method || 'GET').toUpperCase()
+  const timeoutMs = method === 'POST' ? AI_REQUEST_TIMEOUT_POST_MS : AI_REQUEST_TIMEOUT_GET_MS
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const res = await fetch(`${API_URL}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      }
+    })
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`AI labeling API error (${res.status}): ${text || res.statusText}`)
     }
-  })
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`AI labeling API error (${res.status}): ${text || res.statusText}`)
+    return res.json() as Promise<T>
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`AI service request timed out after ${timeoutMs / 1000}s (${method} ${path})`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
   }
-
-  return res.json() as Promise<T>
 }
 
 export async function callAILabelingEndpoint<T = unknown>(path: string, payload: unknown): Promise<T> {

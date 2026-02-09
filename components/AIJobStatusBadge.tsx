@@ -134,14 +134,17 @@ export default function AIJobStatusBadge() {
                   [...prevIds].some(id => !newIds.has(id)) ||
                   [...newIds].some(id => !prevIds.has(id))
                 
-                // Also check if any job status changed
-                const statusChanged = prev.some(pJob => {
-                  const nJob = active.find(a => a.id === pJob.id)
-                  return nJob && nJob.status !== pJob.status
+                // Check if any job status or progress changed
+                const dataChanged = prev.some(pJob => {
+                  const nJob = active.find((a: AIJob) => a.id === pJob.id)
+                  if (!nJob) return false
+                  return nJob.status !== pJob.status ||
+                    (nJob.processedSentences ?? 0) !== (pJob.processedSentences ?? 0) ||
+                    (nJob.failedSentences ?? 0) !== (pJob.failedSentences ?? 0)
                 })
                 
                 // Only update if something actually changed
-                if (idsChanged || statusChanged) {
+                if (idsChanged || dataChanged) {
                   return active
                 }
                 return prev // Return previous to avoid re-render
