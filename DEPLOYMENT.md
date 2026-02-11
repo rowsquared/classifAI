@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide covers production deployment for classifAI. The app provides the UI and database for classification workflows. AI labeling and learning are optional and come from the separate Taxomind service.
+This guide covers production deployment for classiflow. The app provides the UI and database for classification workflows. AI labeling and learning are optional and come from the separate Taxomind service.
 
 ## Prerequisites
 
@@ -15,8 +15,8 @@ Use this when you want the app and database deployed together.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/classifai.git
-cd classifai
+git clone https://github.com/yourusername/classiflow.git
+cd classiflow
 ```
 
 2. Copy the environment template and set secure values:
@@ -87,7 +87,7 @@ On first start, the default admin user is created from the environment variables
 Back up your PostgreSQL database regularly. Example with Docker:
 
 ```bash
-docker exec classifai-postgres pg_dump -U classifai classifai > backup.sql
+docker exec classiflow-postgres pg_dump -U classiflow classiflow > backup.sql
 ```
 
 ## Troubleshooting

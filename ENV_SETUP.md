@@ -6,7 +6,7 @@ Create a `.env` file in the project root with the following variables:
 
 ```env
 # Database
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/classifai?schema=public"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/classiflow?schema=public"
 
 # NextAuth
 AUTH_URL="http://localhost:3000" # Auth.js v5 canonical URL
@@ -15,7 +15,7 @@ NEXTAUTH_URL="http://localhost:3000"
 NEXTAUTH_SECRET="your-secret-key-change-this-in-production"
 
 # Default Admin User (created on first run if not exists)
-DEFAULT_ADMIN_EMAIL="admin@classifai.local"
+DEFAULT_ADMIN_EMAIL="admin@classiflow.local"
 DEFAULT_ADMIN_PASSWORD="change-this-password-immediately"
 DEFAULT_ADMIN_NAME="System Administrator"
 

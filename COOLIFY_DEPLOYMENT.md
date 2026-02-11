@@ -1,6 +1,6 @@
 # Coolify Deployment Guide
 
-This guide will help you deploy the classifai application on Coolify.
+This guide will help you deploy the classiflow application on Coolify.
 
 ## Prerequisites
 
@@ -37,9 +37,9 @@ Add the following environment variables in Coolify:
 
 ```env
 # PostgreSQL Configuration (will be used by the embedded database)
-POSTGRES_USER=classifai
+POSTGRES_USER=classiflow
 POSTGRES_PASSWORD=generate-a-secure-password-here
-POSTGRES_DB=classifai
+POSTGRES_DB=classiflow
 
 # NextAuth Configuration
 NEXTAUTH_URL=https://your-domain.com
@@ -154,11 +154,11 @@ In your Coolify dashboard:
 1. Navigate to **Databases** → **Add New Database**
 2. Select **PostgreSQL**
 3. Configure:
-   - **Name**: `classifai-db`
+   - **Name**: `classiflow-db`
    - **PostgreSQL Version**: `16` (or latest)
-   - **Username**: `classifai`
+   - **Username**: `classiflow`
    - **Password**: Generate a secure password
-   - **Database Name**: `classifai`
+   - **Database Name**: `classiflow`
 4. Click **Create**
 5. Note the internal connection string
 
@@ -175,7 +175,7 @@ In your Coolify dashboard:
 
 ```env
 # Database (use the connection string from the separate database)
-DATABASE_URL=postgresql://classifai:your-password@classifai-db:5432/classifai?schema=public
+DATABASE_URL=postgresql://classiflow:your-password@classiflow-db:5432/classiflow?schema=public
 
 # NextAuth Configuration
 NEXTAUTH_URL=https://your-domain.com
@@ -267,10 +267,10 @@ You can create manual backups by running:
 
 ```bash
 # Backup
-docker exec classifai-postgres pg_dump -U classifai classifai > backup.sql
+docker exec classiflow-postgres pg_dump -U classiflow classiflow > backup.sql
 
 # Restore
-cat backup.sql | docker exec -i classifai-postgres psql -U classifai classifai
+cat backup.sql | docker exec -i classiflow-postgres psql -U classiflow classiflow
 ```
 
 For automated backups, consider:
@@ -376,7 +376,7 @@ The application uses PostgreSQL for all persistent data. Ensure:
 ## Support
 
 For issues specific to:
-- **classifai application**: Check the main README.md
+- **classiflow application**: Check the main README.md
 - **Coolify deployment**: Visit [Coolify Documentation](https://coolify.io/docs)
 - **Prisma migrations**: Visit [Prisma Documentation](https://www.prisma.io/docs)
 
