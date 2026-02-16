@@ -1,6 +1,6 @@
 # Development Setup
 
-This guide is for developers who want to run classifAI locally from source.
+This guide is for developers who want to run classiflow locally from source.
 
 ## Prerequisites
 
@@ -12,8 +12,8 @@ This guide is for developers who want to run classifAI locally from source.
 
 1. Clone and install:
 ```bash
-git clone https://github.com/yourusername/classifai.git
-cd classifai
+git clone https://github.com/yourusername/classiflow.git
+cd classiflow
 npm install
 ```
 
@@ -39,4 +39,4 @@ Note: `npm run dev` currently sets a local `DATABASE_URL` in `package.json`. If 
 
 ## Optional: AI suggestions
 
-classifAI can call Taxomind for AI labeling. To enable it locally, run Taxomind and set `AI_LABELING_API_URL` and `AI_LABELING_API_KEY` in `.env`.
+classiflow can call Taxomind for AI labeling. To enable it locally, run Taxomind and set `AI_LABELING_API_URL` and `AI_LABELING_API_KEY` in `.env`.

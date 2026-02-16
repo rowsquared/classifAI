@@ -1,14 +1,14 @@
-# classifAI
+# classiflow
 
 Complex classifications made easy.
 
 Open-source. AI-assisted. User-friendly.
 Built for ISCO, ISIC, COICOP, and beyond.
 
-classifAI is an open-source labeling platform for hierarchical classifications. It provides the user interface and database for classification workflows.
-AI labeling and learning are handled by the separate Taxomind service (https://github.com/rowsquared/taxomind). You can run classifAI without AI and connect it later.
+classiflow is an open-source labeling platform for hierarchical classifications. It provides the user interface and database for classification workflows.
+AI labeling and learning are handled by the separate Taxomind service (https://github.com/rowsquared/taxomind). You can run classiflow without AI and connect it later.
 
-## Why classifAI
+## Why classiflow
 
 - Faster classifications with AI-assisted suggestions reviewed by humans
 - Higher quality with review and double-annotation workflows
@@ -26,12 +26,12 @@ AI labeling and learning are handled by the separate Taxomind service (https://g
 
 ## Getting started
 
-The simplest way to try classifAI is with Docker Compose.
+The simplest way to try classiflow is with Docker Compose.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/classifai.git
-cd classifai
+git clone https://github.com/yourusername/classiflow.git
+cd classiflow
 ```
 
 2. Copy the environment template:
@@ -47,7 +47,7 @@ docker compose up -d --build
 ```
 6. Open http://localhost:3000, log in with the default admin, and change the password.
 
-For hosted setup or a demo, see https://rowsquared.com/classifai/.
+For hosted setup or a demo, see https://rowsquared.com/classiflow/.
 
 ## Configuration
 
@@ -78,14 +78,14 @@ The default admin user is created on first run using `DEFAULT_ADMIN_EMAIL` and `
 
 ## FAQs
 
-- **What is classifAI?** An open-source, AI-assisted platform for hierarchical classifications and labeling.
-- **How much does it cost and where can I find it?** It is open-source and free to use. You can self-host from this repository, or request hosted setup via https://rowsquared.com/classifai/.
+- **What is classiflow?** An open-source, AI-assisted platform for hierarchical classifications and labeling.
+- **How much does it cost and where can I find it?** It is open-source and free to use. You can self-host from this repository, or request hosted setup via https://rowsquared.com/classiflow/.
 - **Do I need data scientists or technical expertise to use it?** No. It is designed for domain experts and field teams, not data scientists.
 - **Can I trust the AI predictions?** AI suggestions are optional and are always reviewed by humans. Corrections improve model quality over time.
 - **Where does my data go?** With self-hosting, your data stays on your infrastructure. If you enable AI suggestions, data is sent to your Taxomind service.
 - **What classification systems does it support?** Built for ISCO, ISIC, COICOP, and beyond.
 - **How does it integrate with my workflow and can I customize it?** Use flexible assignments, filters, comments, and flags. The project is open-source and can be customized.
-- **What kind of support do you offer?** We can help with setup, integration, and custom features. See https://rowsquared.com/classifai/ for more info.
+- **What kind of support do you offer?** We can help with setup, integration, and custom features. See https://rowsquared.com/classiflow/ for more info.
 
 ## Documentation
 
