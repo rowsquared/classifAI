@@ -34,8 +34,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch all job types
-    const [labelingJobs, trainingJobs, learningTaxonomies, syncTaxonomies] = await Promise.all([
-      // Labeling jobs - always use status filter (it's always set to valid values)
+    const [labelingJobs, learningJobs, trainingJobs, syncTaxonomies] = await Promise.all([
       prisma.aILabelingJob.findMany({
         where: { status: statusFilter },
         orderBy: { startedAt: 'desc' },
@@ -44,7 +43,14 @@ export async function GET(req: NextRequest) {
           createdBy: { select: { id: true, name: true, email: true } }
         }
       }),
-      // External training jobs (handle case where table might not exist yet)
+      prisma.aILearningJob.findMany({
+        where: { status: statusFilter },
+        orderBy: { startedAt: 'desc' },
+        include: {
+          taxonomy: { select: { key: true } },
+          createdBy: { select: { id: true, name: true, email: true } }
+        }
+      }),
       prisma.aIExternalTrainingJob.findMany({
         where: { status: statusFilter },
         orderBy: { startedAt: 'desc' },
@@ -53,62 +59,41 @@ export async function GET(req: NextRequest) {
           createdBy: { select: { id: true, name: true, email: true } }
         }
       }).catch((error: any) => {
-        console.error('Failed to fetch external training jobs (table may not exist):', error?.message || error)
-        return [] // Return empty array if table doesn't exist
+        console.error('Failed to fetch external training jobs:', error?.message || error)
+        return []
       }),
-      // Learning jobs (from Taxonomy)
-      prisma.taxonomy.findMany({
-        where: {
-          lastLearningStatus: statusParams.length > 0 ? { in: statusParams } : { not: null }
-        },
-        select: {
-          id: true,
-          key: true,
-          lastLearningJobId: true,
-          lastLearningStatus: true,
-          lastLearningAt: true,
-          lastLearningError: true,
-          updatedAt: true
-        },
-        orderBy: { updatedAt: 'desc' }
-      }),
-      // Taxonomy sync jobs (from Taxonomy)
+      // Taxonomy sync jobs (still stored on Taxonomy model)
       prisma.taxonomy.findMany({
         where: {
           lastAISyncStatus: statusParams.length > 0 ? { in: statusParams } : { not: null }
         },
         select: {
-          id: true,
-          key: true,
-          lastAISyncJobId: true,
-          lastAISyncStatus: true,
-          lastAISyncAt: true,
-          lastAISyncError: true,
-          updatedAt: true
+          id: true, key: true,
+          lastAISyncJobId: true, lastAISyncStatus: true,
+          lastAISyncAt: true, lastAISyncError: true, updatedAt: true
         },
         orderBy: { updatedAt: 'desc' }
       })
     ])
 
-    // Log job counts for debugging
-    console.log(`[AI Jobs API] Found ${labelingJobs.length} labeling jobs, ${trainingJobs.length} training jobs, ${learningTaxonomies.length} learning jobs, ${syncTaxonomies.length} sync jobs`)
+    const formatSentenceJob = (job: typeof labelingJobs[0] | typeof learningJobs[0], type: 'labeling' | 'learning') => ({
+      id: job.id,
+      type,
+      status: job.status,
+      taxonomy: job.taxonomy.key,
+      totalSentences: job.totalSentences,
+      processedSentences: job.processedSentences,
+      failedSentences: job.failedSentences,
+      startedAt: job.startedAt.toISOString(),
+      completedAt: job.completedAt?.toISOString() || null,
+      errorMessage: job.errorMessage,
+      createdBy: job.createdBy
+    })
 
     // Combine and format all jobs
     const allJobs = [
-      ...labelingJobs.map(job => ({
-        id: job.id,
-        type: 'labeling' as const,
-        status: job.status,
-        taxonomy: job.taxonomy.key,
-        totalSentences: job.totalSentences,
-        processedSentences: job.processedSentences,
-        failedSentences: job.failedSentences,
-        startedAt: job.startedAt.toISOString(),
-        completedAt: job.completedAt?.toISOString() || null,
-        errorMessage: job.errorMessage,
-        createdBy: job.createdBy,
-        _sortKey: `${job.startedAt.toISOString()}-${job.id}` // Add sort key to ensure stable ordering
-      })),
+      ...labelingJobs.map(j => formatSentenceJob(j, 'labeling')),
+      ...learningJobs.map(j => formatSentenceJob(j, 'learning')),
       ...trainingJobs.map(job => ({
         id: job.id,
         type: 'external_training' as const,
@@ -119,19 +104,7 @@ export async function GET(req: NextRequest) {
         startedAt: job.startedAt.toISOString(),
         completedAt: job.completedAt?.toISOString() || null,
         errorMessage: job.errorMessage,
-        createdBy: job.createdBy,
-        _sortKey: `${job.startedAt.toISOString()}-${job.id}` // Add sort key to ensure stable ordering
-      })),
-      ...learningTaxonomies.map(taxonomy => ({
-        id: taxonomy.lastLearningJobId || `learning-${taxonomy.id}`,
-        type: 'learning' as const,
-        status: taxonomy.lastLearningStatus === 'success' ? 'completed' : (taxonomy.lastLearningStatus || 'pending'),
-        taxonomy: taxonomy.key,
-        startedAt: taxonomy.lastLearningAt?.toISOString() || taxonomy.updatedAt.toISOString(),
-        completedAt: taxonomy.lastLearningStatus === 'completed' || taxonomy.lastLearningStatus === 'success' || taxonomy.lastLearningStatus === 'failed' || taxonomy.lastLearningStatus === 'cancelled' ? (taxonomy.lastLearningAt?.toISOString() || taxonomy.updatedAt.toISOString()) : null,
-        errorMessage: taxonomy.lastLearningError,
-        createdBy: null,
-        _sortKey: `${taxonomy.lastLearningAt?.toISOString() || taxonomy.updatedAt.toISOString()}-${taxonomy.lastLearningJobId || taxonomy.id}` // Add sort key to ensure stable ordering
+        createdBy: job.createdBy
       })),
       ...syncTaxonomies.map(taxonomy => ({
         id: taxonomy.lastAISyncJobId || `sync-${taxonomy.id}`,
@@ -141,33 +114,21 @@ export async function GET(req: NextRequest) {
         startedAt: taxonomy.lastAISyncAt?.toISOString() || taxonomy.updatedAt.toISOString(),
         completedAt: taxonomy.lastAISyncStatus === 'completed' || taxonomy.lastAISyncStatus === 'success' || taxonomy.lastAISyncStatus === 'failed' || taxonomy.lastAISyncStatus === 'cancelled' ? (taxonomy.lastAISyncAt?.toISOString() || taxonomy.updatedAt.toISOString()) : null,
         errorMessage: taxonomy.lastAISyncError,
-        createdBy: null,
-        _sortKey: `${taxonomy.lastAISyncAt?.toISOString() || taxonomy.updatedAt.toISOString()}-${taxonomy.lastAISyncJobId || taxonomy.id}` // Add sort key to ensure stable ordering
+        createdBy: null
       }))
     ]
 
     // Sort by most recent activity (completedAt if available, otherwise startedAt)
-    // This puts active jobs first, then most recently completed jobs
     allJobs.sort((a, b) => {
-      // Use completedAt if available, otherwise startedAt
       const timeA = new Date(a.completedAt || a.startedAt).getTime()
       const timeB = new Date(b.completedAt || b.startedAt).getTime()
-      if (timeB !== timeA) {
-        return timeB - timeA // Different timestamps: sort by time descending (most recent first)
-      }
-      // Same timestamp: sort by id descending (newer IDs come first)
+      if (timeB !== timeA) return timeB - timeA
       return b.id.localeCompare(a.id)
-    })
-    
-    // Remove the temporary _sortKey before returning (handle jobs that might not have it)
-    const cleanedJobs = allJobs.map((job: any) => {
-      const { _sortKey, ...rest } = job
-      return rest
     })
 
     // Apply pagination
-    const total = cleanedJobs.length
-    const paginatedJobs = cleanedJobs.slice((page - 1) * limit, page * limit)
+    const total = allJobs.length
+    const paginatedJobs = allJobs.slice((page - 1) * limit, page * limit)
 
     return NextResponse.json({
       ok: true,

@@ -23,25 +23,14 @@ export async function POST(
       return NextResponse.json({ error: 'Taxonomy not found' }, { status: 404 })
     }
 
-    // Check if any AI job is currently running (unified queue)
-    const { hasActiveAIJob } = await import('@/lib/ai-job-queue')
-    const hasActive = await hasActiveAIJob()
-    
-    if (hasActive) {
-      // Update taxonomy status to pending - job will be queued
-      await prisma.taxonomy.update({
-        where: { id: taxonomy.id },
-        data: {
-          lastAISyncStatus: 'pending',
-          lastAISyncError: null
-        }
-      })
-      return NextResponse.json({
-        ok: true,
-        jobId: 'queued',
-        message: 'Job queued. It will start when the current job completes.'
-      })
-    }
+    // Mark as processing immediately
+    await prisma.taxonomy.update({
+      where: { id: taxonomy.id },
+      data: {
+        lastAISyncStatus: 'processing',
+        lastAISyncError: null
+      }
+    })
 
     const nodes = await prisma.taxonomyNode.findMany({
       where: { taxonomyId: taxonomy.id },
@@ -96,21 +85,20 @@ export async function POST(
     try {
       jobId = await startAIJob('/taxonomies', payload)
     } catch (error: any) {
-      // If startAIJob fails (e.g., validation error), record it as failed
       const errorMessage = error?.message || 'Failed to start AI sync job'
       await prisma.taxonomy.update({
         where: { id: taxonomy.id },
         data: {
-          lastAISyncJobId: `failed-${Date.now()}`, // Temporary ID for tracking
+          lastAISyncJobId: `failed-${Date.now()}`,
           lastAISyncAt: new Date(),
           lastAISyncStatus: 'failed',
           lastAISyncError: errorMessage
         }
       })
-      throw error // Re-throw to be caught by outer catch block
+      throw error
     }
 
-    // Job started successfully, set status to processing
+    // Job started — record the external job ID
     await prisma.taxonomy.update({
       where: { id: taxonomy.id },
       data: {
@@ -121,22 +109,18 @@ export async function POST(
       }
     })
 
-    // Monitor job asynchronously
+    // Monitor job asynchronously (fire-and-forget)
     monitorAIJob(jobId, `/taxonomies/${jobId}/status`, async (result) => {
-      // Process next queued job after completion
-      const { processNextQueuedJob } = await import('@/lib/ai-job-queue')
-      await processNextQueuedJob()
-      
-      // Check if job was cancelled
+      // Check if job was cancelled while monitoring
       const currentTaxonomy = await prisma.taxonomy.findUnique({
         where: { id: taxonomy.id },
         select: { lastAISyncStatus: true }
       })
-      
+
       if (currentTaxonomy?.lastAISyncStatus === 'cancelled') {
-        return // Job was cancelled, don't update status
+        return
       }
-      
+
       const data: Record<string, any> = result.success
         ? {
             lastAISyncStatus: 'completed',
@@ -160,4 +144,3 @@ export async function POST(
     return NextResponse.json({ error: error?.message || 'Failed to sync taxonomy' }, { status: 500 })
   }
 }
-

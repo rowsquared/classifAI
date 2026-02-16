@@ -46,10 +46,6 @@ export async function POST(
         }
       })
 
-      // After cancelling, trigger processor to pick up any pending jobs
-      const { triggerAILabelingProcessor } = await import('@/lib/ai-job-runner')
-      triggerAILabelingProcessor()
-
       return NextResponse.json({ ok: true, status: isStuck ? 'failed' : 'cancelled' })
     }
 
@@ -79,28 +75,34 @@ export async function POST(
     }
 
     if (type === 'learning') {
-      // Find taxonomy by lastLearningJobId
-      const taxonomy = await prisma.taxonomy.findFirst({
-        where: {
-          lastLearningJobId: jobId,
-          lastLearningStatus: { in: ['pending', 'processing'] }
-        },
-        select: { id: true }
+      const job = await prisma.aILearningJob.findUnique({
+        where: { id: jobId },
+        select: { status: true, startedAt: true }
       })
 
-      if (!taxonomy) {
-        return NextResponse.json({ error: 'Job not found or already completed' }, { status: 404 })
+      if (!job) {
+        return NextResponse.json({ error: 'Job not found' }, { status: 404 })
       }
 
-      await prisma.taxonomy.update({
-        where: { id: taxonomy.id },
+      if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+        return NextResponse.json({ ok: true, status: job.status })
+      }
+
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
+      const isStuck = job.status === 'processing' && job.startedAt < oneHourAgo
+
+      await prisma.aILearningJob.update({
+        where: { id: jobId },
         data: {
-          lastLearningStatus: 'cancelled',
-          lastLearningError: 'Cancelled by user'
+          status: isStuck ? 'failed' : 'cancelled',
+          completedAt: new Date(),
+          errorMessage: isStuck
+            ? 'Job was stuck in processing state and has been cancelled'
+            : 'Cancelled by user'
         }
       })
 
-      return NextResponse.json({ ok: true, status: 'cancelled' })
+      return NextResponse.json({ ok: true, status: isStuck ? 'failed' : 'cancelled' })
     }
 
     if (type === 'taxonomy_sync') {

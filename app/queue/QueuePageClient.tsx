@@ -160,8 +160,6 @@ export default function QueuePageClient({
   const skipInitialQueueFetch = useRef(initialQueue !== null)
   const skipInitialStatsFetch = useRef(initialStatsPrefetched)
   const [sendingToAI, setSendingToAI] = useState(false)
-  const [aiQueueStatus, setAiQueueStatus] = useState<{ current: string | null; remaining: string[] } | null>(null)
-  const cancelAIQueueRef = useRef(false)
   
   // Filter & Pagination State
   const [filters, setFilters] = useState<QueueFilters>(DEFAULT_FILTERS)
@@ -188,8 +186,7 @@ export default function QueuePageClient({
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
   
-  // Track active AI jobs to poll for completion
-  const [activeJobIds, setActiveJobIds] = useState<Set<string>>(new Set())
+  
 
   // Fetch stats with current filters applied
   const fetchStats = useCallback(async () => {
@@ -229,13 +226,17 @@ export default function QueuePageClient({
       })
       
       const res = await fetch(`/api/sentences/stats?${params}`)
-      if (!res.ok) throw new Error('Failed to fetch stats')
+      if (!res.ok) {
+        // Silently ignore transient failures — stats will refresh on next cycle
+        return
+      }
       const data = await res.json()
       if (data.ok) {
         setStats(data.stats)
       }
     } catch (error) {
-      console.error('Failed to load stats:', error)
+      // Network errors during polling are expected (e.g. during deploys)
+      // Don't log to avoid console noise
     }
   }, [searchQuery, filters])
 
@@ -436,36 +437,6 @@ export default function QueuePageClient({
     t.lastAISyncStatus !== 'completed' && t.lastAISyncStatus !== 'success'
   )
 
-  const waitForAIJobCompletion = async (jobId: string, taxonomyLabel: string, sentenceCount: number) => {
-    // Dynamic timeout: ~2 min per 100 sentences (accounting for retries and overhead),
-    // with a minimum of 10 minutes and a generous buffer.
-    const pollIntervalMs = 3000
-    const estimatedMinutes = Math.max(10, Math.ceil(sentenceCount / 100) * 2.5 + 5)
-    const maxAttempts = Math.ceil((estimatedMinutes * 60 * 1000) / pollIntervalMs)
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const res = await fetch(`/api/ai-labeling/jobs/${jobId}`)
-        if (res.ok) {
-          const data = await res.json()
-          const status = data.job?.status
-          if (status && status !== 'pending' && status !== 'processing') {
-            return data.job
-          }
-        }
-      } catch (error) {
-        console.error(`Failed to fetch AI job status for ${taxonomyLabel}:`, error)
-      }
-      await new Promise(resolve => setTimeout(resolve, pollIntervalMs))
-    }
-    throw new Error(`AI job for ${taxonomyLabel} timed out after ~${estimatedMinutes} minutes.`)
-  }
-
-  const handleCancelPendingAIJobs = () => {
-    cancelAIQueueRef.current = true
-    addToast('info', 'Will cancel remaining AI jobs after the current one completes.', 4000)
-  }
-
   const handleSendSelectedToAI = async () => {
     if (selectedIds.size === 0) {
       addToast('error', 'Select at least one sentence.')
@@ -477,8 +448,7 @@ export default function QueuePageClient({
       return
     }
 
-    // Check all taxonomies that are not successfully synced (any status other than 'completed' or 'success')
-    const unsyncedTaxonomies = activeTaxonomies.filter(t => 
+    const unsyncedTaxonomies = activeTaxonomies.filter(t =>
       t.lastAISyncStatus !== 'completed' && t.lastAISyncStatus !== 'success'
     )
     if (unsyncedTaxonomies.length > 0) {
@@ -488,157 +458,58 @@ export default function QueuePageClient({
     }
 
     const sentenceIdArray = Array.from(selectedIds)
-    if (sentenceIdArray.length === 0) {
-      addToast('error', 'Select at least one sentence.')
-      return
-    }
 
     try {
       setSendingToAI(true)
-      cancelAIQueueRef.current = false
-      const taxonomyKeys = activeTaxonomies.map(t => t.key)
-      const sessionId = `session-${Date.now()}`
-      const queueStatus = { current: null, remaining: taxonomyKeys, sessionId }
-      setAiQueueStatus(queueStatus)
-      // Share queue status with AIJobStatusBadge via sessionStorage
-      sessionStorage.setItem('aiQueueStatus', JSON.stringify(queueStatus))
-      // Store session ID to track which jobs belong to this session
-      sessionStorage.setItem('currentAISessionId', sessionId)
 
-      for (let i = 0; i < activeTaxonomies.length; i++) {
-        const taxonomy = activeTaxonomies[i]
-        if (cancelAIQueueRef.current) {
-          addToast('info', 'Cancelled remaining AI jobs. Current job will finish before stopping.', 4000)
-          break
-        }
-
-        // Check if this taxonomy was cancelled from the popup
-        try {
-          const queueStatusStr = sessionStorage.getItem('aiQueueStatus')
-          if (queueStatusStr) {
-            const queueStatus = JSON.parse(queueStatusStr) as { current: string | null; remaining: string[] }
-            if (!queueStatus.remaining.includes(taxonomy.key) && queueStatus.current !== taxonomy.key) {
-              // This taxonomy was cancelled, skip it
-              continue
-            }
+      // Fire all taxonomy jobs concurrently — server splits into batches
+      const results = await Promise.allSettled(
+        syncedTaxonomies.map(async (taxonomy) => {
+          const res = await fetch('/api/ai-labeling/jobs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taxonomyKey: taxonomy.key,
+              sentenceIds: sentenceIdArray
+            })
+          })
+          const data = await res.json()
+          if (!res.ok) {
+            throw new Error(data.error || `Failed to start AI job for ${taxonomy.key}`)
           }
-        } catch (error) {
-          console.error('Failed to check queue status:', error)
-        }
-
-        const currentSessionId = sessionStorage.getItem('currentAISessionId')
-        const queueStatus = {
-          current: taxonomy.key,
-          remaining: taxonomyKeys.slice(i + 1),
-          sessionId: currentSessionId || undefined
-        }
-        setAiQueueStatus(queueStatus)
-        // Update shared queue status
-        sessionStorage.setItem('aiQueueStatus', JSON.stringify(queueStatus))
-
-        const res = await fetch('/api/ai-labeling/jobs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            taxonomyKey: taxonomy.key,
-            sentenceIds: sentenceIdArray
-          })
+          return { taxonomy: taxonomy.key, totalJobs: data.totalJobs || 1 }
         })
-        const data = await res.json()
-        if (!res.ok) {
-          const errMessage = data.error || `Failed to start AI job for ${taxonomy.key}`
-          throw new Error(errMessage)
-        }
-        const jobId = data.job?.id || data.jobId
-        if (!jobId) {
-          throw new Error(`Missing job ID for ${taxonomy.key}`)
-        }
+      )
 
-        setActiveJobIds(prev => new Set(prev).add(jobId))
-        // Store job ID with session ID for tracking
-        if (currentSessionId) {
-          const sessionJobs = JSON.parse(sessionStorage.getItem('aiSessionJobs') || '[]')
-          sessionJobs.push({ jobId, sessionId: currentSessionId, taxonomyKey: taxonomy.key })
-          sessionStorage.setItem('aiSessionJobs', JSON.stringify(sessionJobs))
-        }
+      // Report results
+      const succeeded = results.filter(r => r.status === 'fulfilled')
+      const failed = results.filter(r => r.status === 'rejected')
 
-        try {
-          await waitForAIJobCompletion(jobId, taxonomy.key, sentenceIdArray.length)
-          // No toast messages - user can check button for status
-        } catch (jobError) {
-          console.error(jobError)
-          // Only show error toasts for actual failures
-          addToast('error', jobError instanceof Error ? jobError.message : String(jobError))
-        } finally {
-          setActiveJobIds(prev => {
-            const next = new Set(prev)
-            next.delete(jobId)
-            return next
-          })
-          setLastRefresh(Date.now())
-          await fetchQueue()
+      if (succeeded.length > 0) {
+        const totalJobs = succeeded.reduce(
+          (sum, r) => sum + (r as PromiseFulfilledResult<{ totalJobs: number }>).value.totalJobs,
+          0
+        )
+        addToast('info', `Created ${totalJobs} AI job${totalJobs !== 1 ? 's' : ''} — track progress in the badge above.`, 5000)
+      }
+
+      if (failed.length > 0) {
+        for (const f of failed) {
+          const err = (f as PromiseRejectedResult).reason
+          addToast('error', err instanceof Error ? err.message : String(err))
         }
       }
+
       setSelectedIds(new Set())
     } catch (error) {
       console.error('Failed to send sentences to AI:', error)
       addToast('error', error instanceof Error ? error.message : 'Failed to send to AI')
     } finally {
       setSendingToAI(false)
-      setAiQueueStatus(null)
-      // DON'T remove aiQueueStatus from sessionStorage here - let the badge component handle cleanup
-      // when all jobs are actually done. Removing it here causes the button to disappear prematurely.
-      cancelAIQueueRef.current = false
     }
   }
   
-  // Poll for completed AI jobs and refresh queue
-  useEffect(() => {
-    if (activeJobIds.size === 0) return
-    
-    const pollInterval = setInterval(async () => {
-      try {
-        // Fetch all pending/processing jobs to see which are still active
-        const res = await fetch('/api/ai-labeling/jobs?status=pending&status=processing&limit=100')
-        if (res.ok) {
-          const data = await res.json()
-          const activeJobs = data.jobs || []
-          const activeJobIdSet = new Set(activeJobs.map((j: any) => j.id))
-          
-          // Find jobs that are no longer active (completed/failed/cancelled)
-          const completedJobIds = Array.from(activeJobIds).filter(id => !activeJobIdSet.has(id))
-          
-          if (completedJobIds.length > 0) {
-            // Fetch details of completed jobs
-            const completedRes = await fetch('/api/ai-labeling/jobs?status=completed&status=failed&status=cancelled&limit=100')
-            if (completedRes.ok) {
-              const completedData = await completedRes.json()
-              const completedJobs = (completedData.jobs || []).filter((job: any) => 
-                completedJobIds.includes(job.id)
-              )
-              
-              // Remove completed jobs from tracking
-              setActiveJobIds(prev => {
-                const next = new Set(prev)
-                completedJobIds.forEach(id => next.delete(id))
-                return next
-              })
-              
-              // Refresh queue to show new AI suggestions
-              setLastRefresh(Date.now())
-              await fetchQueue()
-              
-              // No toast messages - user can check button for status
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to poll AI jobs:', error)
-      }
-    }, 5000) // Poll every 5 seconds
-    
-    return () => clearInterval(pollInterval)
-  }, [activeJobIds, fetchQueue, addToast])
+  
 
   const showStatusColumn = activeTab === 'all'
   const contentWidthClass = showStatusColumn ? 'w-[40%]' : 'w-[45%]'
@@ -835,11 +706,7 @@ export default function QueuePageClient({
                         <svg className="w-4 h-4" viewBox="0 0 12 12" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
                           <path d="M11.787 6.654l-2.895-1.03-1.081-3.403A.324.324 0 007.5 2c-.143 0-.27.09-.311.221l-1.08 3.404-2.897 1.03A.313.313 0 003 6.946c0 .13.085.248.212.293l2.894 1.03 1.082 3.507A.324.324 0 007.5 12c.144 0 .271-.09.312-.224L8.893 8.27l2.895-1.029A.313.313 0 0012 6.947a.314.314 0 00-.213-.293zM4.448 1.77l-1.05-.39-.39-1.05a.444.444 0 00-.833 0l-.39 1.05-1.05.39a.445.445 0 000 .833l1.05.389.39 1.051a.445.445 0 00.833 0l.39-1.051 1.05-.389a.445.445 0 000-.834z" />
                         </svg>
-                        {sendingToAI
-                          ? aiQueueStatus?.current
-                            ? `Sending ${aiQueueStatus.current}…`
-                            : 'Preparing…'
-                          : 'Send to AI'}
+                        {sendingToAI ? 'Sending…' : 'Send to AI'}
                       </button>
                       {!sendingToAI && unsyncedTaxonomies.length > 0 && (
                         <span className="text-xs text-red-600 whitespace-nowrap">

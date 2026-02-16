@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { triggerAILabelingProcessor } from '@/lib/ai-job-runner'
+import { launchJob } from '@/lib/ai-job-monitor'
+import { AI_LABELING_BATCH_SIZE } from '@/lib/constants'
 import { z } from 'zod'
 
 const startSchema = z.object({
@@ -14,7 +15,7 @@ const startSchema = z.object({
 const statusSchema = z.enum(['pending', 'processing', 'completed', 'failed', 'cancelled'])
 
 function buildSentenceFilter(input: z.infer<typeof startSchema>) {
-  const where: any = {}
+  const where: Record<string, unknown> = {}
 
   if (input.sentenceIds?.length) {
     where.id = { in: input.sentenceIds }
@@ -44,8 +45,8 @@ export async function POST(req: NextRequest) {
 
     if (!user) {
       console.error(`User ${session.user.id} from session not found in database`)
-      return NextResponse.json({ 
-        error: 'User account not found. Please log out and log back in.' 
+      return NextResponse.json({
+        error: 'User account not found. Please log out and log back in.'
       }, { status: 401 })
     }
 
@@ -61,6 +62,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Taxonomy not found' }, { status: 404 })
     }
 
+    // Resolve sentence IDs
     const sentenceWhere = buildSentenceFilter(input)
     const sentences = await prisma.sentence.findMany({
       where: sentenceWhere,
@@ -68,37 +70,52 @@ export async function POST(req: NextRequest) {
       orderBy: [{ importOrder: 'asc' }, { id: 'asc' }]
     })
 
-    const sentenceIds = sentences.map(s => s.id)
-    if (sentenceIds.length === 0) {
+    const allSentenceIds = sentences.map(s => s.id)
+    if (allSentenceIds.length === 0) {
       return NextResponse.json({ error: 'No sentences matched the criteria' }, { status: 400 })
     }
 
-    const job = await prisma.aILabelingJob.create({
-      data: {
-        createdById: session.user.id,
-        taxonomyId: taxonomy.id,
-        status: 'pending',
-        totalSentences: sentenceIds.length,
-        filterCriteria: {
-          sentenceIds,
-          importIds: input.importIds || [],
-          onlyUnsubmitted: Boolean(input.onlyUnsubmitted)
+    // Split into batches
+    const batches: string[][] = []
+    for (let i = 0; i < allSentenceIds.length; i += AI_LABELING_BATCH_SIZE) {
+      batches.push(allSentenceIds.slice(i, i + AI_LABELING_BATCH_SIZE))
+    }
+
+    // Create one job per batch and launch monitors
+    const jobs = []
+    for (let i = 0; i < batches.length; i++) {
+      const batchIds = batches[i]
+      const job = await prisma.aILabelingJob.create({
+        data: {
+          createdById: session.user.id,
+          taxonomyId: taxonomy.id,
+          status: 'pending',
+          totalSentences: batchIds.length,
+          batchSize: AI_LABELING_BATCH_SIZE,
+          filterCriteria: { sentenceIds: batchIds }
+        },
+        include: {
+          taxonomy: { select: { key: true } },
+          createdBy: { select: { id: true, name: true, email: true } }
         }
-      },
-      include: {
-        taxonomy: { select: { key: true } },
-        createdBy: { select: { id: true, name: true, email: true } }
-      }
-    })
+      })
 
-    console.log(`✅ Created AI labeling job: ${job.id} for taxonomy ${taxonomy.key} with ${sentenceIds.length} sentences`)
+      jobs.push(job)
 
-    triggerAILabelingProcessor()
+      // Fire-and-forget: launch the monitor which will send to external API and poll
+      launchJob(job.id)
+    }
 
-    return NextResponse.json({ ok: true, job })
-  } catch (error: any) {
+    console.log(
+      `✅ Created ${jobs.length} AI labeling job(s) for taxonomy ${taxonomy.key} ` +
+      `(${allSentenceIds.length} sentences in batches of ${AI_LABELING_BATCH_SIZE})`
+    )
+
+    return NextResponse.json({ ok: true, jobs, totalJobs: jobs.length })
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Failed to start AI labeling job'
     console.error('Failed to start AI labeling job:', error)
-    return NextResponse.json({ error: error?.message || 'Failed to start AI labeling job' }, { status: 500 })
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
@@ -114,7 +131,7 @@ export async function GET(req: NextRequest) {
     const page = Math.max(parseInt(searchParams.get('page') || '1', 10), 1)
     const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '20', 10), 1), 100)
 
-    const where: any = {}
+    const where: Record<string, unknown> = {}
     if (statusParams.length > 0) {
       const validStatuses = statusParams.filter(s => statusSchema.safeParse(s).success)
       if (validStatuses.length > 0) {
@@ -139,16 +156,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       jobs,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit)
-      }
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) }
     })
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Failed to fetch jobs'
     console.error('Failed to fetch AI labeling jobs:', error)
-    return NextResponse.json({ error: error?.message || 'Failed to fetch jobs' }, { status: 500 })
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
-

@@ -64,30 +64,7 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
   const [submitting, setSubmitting] = useState(false)
   const [syncingKeys, setSyncingKeys] = useState<Set<string>>(new Set())
   const [learningKeys, setLearningKeys] = useState<Set<string>>(new Set())
-  const [trainingKeys, setTrainingKeys] = useState<Set<string>>(new Set())
-  
-  // External training modal states
-  const [externalTrainingModalOpen, setExternalTrainingModalOpen] = useState(false)
-  const [selectedTaxonomyForTraining, setSelectedTaxonomyForTraining] = useState<Taxonomy | null>(null)
-  const [trainingFile, setTrainingFile] = useState<File | null>(null)
-  const [validatingTraining, setValidatingTraining] = useState(false)
-  const [trainingValidationResult, setTrainingValidationResult] = useState<{
-    ok: boolean
-    message?: string
-    error?: string
-    errors?: Array<{ row: number; message: string }>
-    recordCount?: number
-  } | null>(null)
-  const [uploadingTraining, setUploadingTraining] = useState(false)
-  const [trainingUploadResult, setTrainingUploadResult] = useState<{
-    ok: boolean
-    jobId?: string
-    fileName?: string
-    recordCount?: number
-    trainingDataUrl?: string
-    error?: string
-  } | null>(null)
-  
+
   // Validation states
   const [validating, setValidating] = useState(false)
   const [validationResult, setValidationResult] = useState<{
@@ -111,12 +88,13 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     if (!hasActiveJobs) return
 
     const interval = setInterval(() => {
-      loadTaxonomies()
+      refreshTaxonomies()
     }, 5000) // Poll every 5 seconds
 
     return () => clearInterval(interval)
   }, [taxonomies])
 
+  // Full load with loading spinner (for initial load & user-triggered reloads)
   async function loadTaxonomies() {
     try {
       setLoading(true)
@@ -133,6 +111,22 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
       setMessage({ type: 'error', text: 'Failed to load taxonomies' })
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Silent refresh — no loading spinner, used by polling
+  async function refreshTaxonomies() {
+    try {
+      const res = await fetch('/api/taxonomies')
+      const data = await res.json()
+      if (data.ok) {
+        if (typeof data.learningThreshold === 'number') {
+          setLearningThreshold(data.learningThreshold)
+        }
+        setTaxonomies(data.taxonomies)
+      }
+    } catch (error) {
+      console.error('Failed to refresh taxonomies:', error)
     }
   }
 
@@ -389,147 +383,8 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     return learningKeys.has(key)
   }
 
-  function isTraining(key: string) {
-    return trainingKeys.has(key)
-  }
-
   function isSyncedWithAI(taxonomy: Taxonomy) {
     return taxonomy.lastAISyncStatus === 'completed' || taxonomy.lastAISyncStatus === 'success'
-  }
-
-  function openExternalTrainingModal(taxonomy: Taxonomy) {
-    setSelectedTaxonomyForTraining(taxonomy)
-    setTrainingFile(null)
-    setTrainingValidationResult(null)
-    setTrainingUploadResult(null)
-    setExternalTrainingModalOpen(true)
-  }
-
-  async function validateTrainingFile() {
-    if (!trainingFile || !selectedTaxonomyForTraining) {
-      setTrainingValidationResult({
-        ok: false,
-        error: 'Please select a file first',
-        errors: [{ row: 0, message: 'No file selected' }]
-      })
-      return
-    }
-
-    setValidatingTraining(true)
-    setTrainingValidationResult(null)
-
-    try {
-      const formDataToSend = new FormData()
-      formDataToSend.append('file', trainingFile)
-      formDataToSend.append('taxonomyKey', selectedTaxonomyForTraining.key)
-
-      const res = await fetch('/api/ai-labeling/external-training/validate', {
-        method: 'POST',
-        body: formDataToSend
-      })
-
-      const data = await res.json()
-      setTrainingValidationResult(data)
-    } catch (error: any) {
-      console.error('Validation error:', error)
-      setTrainingValidationResult({
-        ok: false,
-        error: error.message || 'An unexpected error occurred during validation',
-        errors: [{ row: 0, message: error.message || 'An unexpected error occurred during validation' }]
-      })
-    } finally {
-      setValidatingTraining(false)
-    }
-  }
-
-  async function uploadAndStartTraining() {
-    if (!trainingFile || !selectedTaxonomyForTraining || !trainingValidationResult?.ok) {
-      return
-    }
-
-    setUploadingTraining(true)
-    setTrainingUploadResult(null)
-
-    try {
-      // Step 1: Upload CSV and convert to JSON
-      const uploadFormData = new FormData()
-      uploadFormData.append('file', trainingFile)
-      uploadFormData.append('taxonomyKey', selectedTaxonomyForTraining.key)
-
-      const uploadRes = await fetch('/api/ai-labeling/external-training/upload', {
-        method: 'POST',
-        body: uploadFormData
-      })
-
-      const uploadData = await uploadRes.json()
-
-      if (!uploadRes.ok) {
-        setTrainingUploadResult({
-          ok: false,
-          error: uploadData.error || 'Failed to upload training data'
-        })
-        return
-      }
-
-      // Step 2: Start the training job
-      setTrainingKeys(prev => new Set(prev).add(selectedTaxonomyForTraining.key))
-      
-      const startRes = await fetch('/api/ai-labeling/external-training/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taxonomyKey: selectedTaxonomyForTraining.key,
-          trainingDataUrl: uploadData.trainingDataUrl,
-          fileName: uploadData.fileName,
-          recordCount: uploadData.recordCount
-        })
-      })
-
-      const startData = await startRes.json()
-
-      if (startRes.ok) {
-        setTrainingUploadResult({
-          ok: true,
-          jobId: startData.job?.id,
-          fileName: uploadData.fileName,
-          recordCount: uploadData.recordCount,
-          trainingDataUrl: uploadData.trainingDataUrl
-        })
-        setMessage({ 
-          type: 'success', 
-          text: `External training job started for "${selectedTaxonomyForTraining.key}" with ${uploadData.recordCount} records` 
-        })
-        // Delay reload to avoid flashing - let the badge update first
-        setTimeout(() => {
-          loadTaxonomies()
-        }, 500)
-        // Close modal after a short delay
-        setTimeout(() => {
-          setExternalTrainingModalOpen(false)
-          setTrainingFile(null)
-          setTrainingValidationResult(null)
-          setTrainingUploadResult(null)
-        }, 2000)
-      } else {
-        setTrainingUploadResult({
-          ok: false,
-          error: startData.error || 'Failed to start training job'
-        })
-      }
-    } catch (error) {
-      console.error('Training job error:', error)
-      setTrainingUploadResult({
-        ok: false,
-        error: error instanceof Error ? error.message : 'Network error while starting training job'
-      })
-    } finally {
-      setUploadingTraining(false)
-      setTrainingKeys(prev => {
-        const next = new Set(prev)
-        next.delete(selectedTaxonomyForTraining.key)
-        return next
-      })
-    }
   }
 
   async function handleSyncAI(taxonomy: Taxonomy) {
@@ -542,10 +397,8 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
       const data = await res.json()
       if (res.ok) {
         setMessage({ type: 'success', text: `AI sync started for "${taxonomy.key}" (job ${data.jobId})` })
-        // Delay reload to avoid flashing - let the badge update first
-        setTimeout(() => {
-          loadTaxonomies()
-        }, 500)
+        // Refresh silently after a short delay
+        setTimeout(() => refreshTaxonomies(), 500)
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to start AI sync' })
       }
@@ -572,11 +425,11 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
       })
       const data = await res.json()
       if (res.ok) {
-        setMessage({ type: 'success', text: `Learning job started for "${taxonomy.key}" (job ${data.jobId})` })
-        // Delay reload to avoid flashing - let the badge update first
-        setTimeout(() => {
-          loadTaxonomies()
-        }, 500)
+        setMessage({
+          type: 'success',
+          text: `Created ${data.totalJobs} learning job(s) for "${taxonomy.key}" (${data.totalSentences} sentences). Track progress in the AI jobs badge.`
+        })
+        setTimeout(() => refreshTaxonomies(), 500)
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to start learning job' })
       }
@@ -598,6 +451,8 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
     const styles =
       normalized === 'success' || normalized === 'completed' || normalized === 'deleted'
         ? 'bg-green-100 text-green-800'
+        : normalized === 'processing'
+        ? 'bg-indigo-100 text-indigo-800'
         : normalized === 'pending' || normalized === 'deleting'
         ? 'bg-yellow-100 text-yellow-800'
         : normalized === 'failed' || normalized === 'delete_failed'
@@ -744,22 +599,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                               {taxonomy.lastLearningAt ? formatRelativeTime(taxonomy.lastLearningAt) : 'Never trained'}
                               {' '}
                               <strong>{(taxonomy.newAnnotationsSinceLastLearning ?? 0).toLocaleString()}</strong> / {learningThreshold.toLocaleString()} new annotations
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* External Training */}
-                        <div className="flex flex-col">
-                          <button
-                            onClick={() => openExternalTrainingModal(taxonomy)}
-                            disabled={!isSyncedWithAI(taxonomy) || isTraining(taxonomy.key)}
-                            className="px-4 py-2.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-                          >
-                            {isTraining(taxonomy.key) ? 'Processing…' : 'Upload external training data'}
-                          </button>
-                          <div className="mt-2 text-center">
-                            <p className="text-xs text-gray-500 mt-1">
-                              {taxonomy.lastExternalTrainingAt ? formatRelativeTime(taxonomy.lastExternalTrainingAt) : 'Never trained'}
                             </p>
                           </div>
                         </div>
@@ -1129,171 +968,6 @@ export default function TaxonomyAdminClient({ initialTaxonomies, initialLearning
                 className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {submitting ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* External Training Modal */}
-      {externalTrainingModalOpen && selectedTaxonomyForTraining && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-gray-900">External Training: {selectedTaxonomyForTraining.key}</h2>
-              <button
-                onClick={() => {
-                  setExternalTrainingModalOpen(false)
-                  setTrainingFile(null)
-                  setTrainingValidationResult(null)
-                  setTrainingUploadResult(null)
-                }}
-                className="text-gray-500 hover:text-gray-700 text-2xl"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Training Data CSV File *
-                </label>
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 relative">
-                    <input
-                      type="file"
-                      accept=".csv"
-                      onChange={(e) => {
-                        const newFile = e.target.files?.[0] || null
-                        setTrainingFile(newFile)
-                        if (newFile !== trainingFile) {
-                          setTrainingValidationResult(null)
-                          setTrainingUploadResult(null)
-                        }
-                      }}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                      id="training-file-input"
-                    />
-                    <div className="flex items-center gap-3 px-4 py-2.5 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 transition-colors">
-                      <span className="text-sm text-gray-500 truncate flex-1">
-                        {trainingFile ? trainingFile.name : 'No file chosen'}
-                      </span>
-                    </div>
-                  </div>
-                  <label
-                    htmlFor="training-file-input"
-                    className="px-6 py-2.5 bg-indigo-50 text-indigo-700 font-medium rounded-lg hover:bg-indigo-100 transition-colors cursor-pointer whitespace-nowrap border border-indigo-200"
-                  >
-                    Choose file...
-                  </label>
-                  {trainingFile && (
-                    <button
-                      onClick={validateTrainingFile}
-                      disabled={validatingTraining}
-                      className="px-6 py-2.5 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-                    >
-                      {validatingTraining ? 'Validating...' : 'Validate File'}
-                    </button>
-                  )}
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  ℹ️ Required: at least one field_* column (matching existing sentence fields) and taxonomy level columns (e.g., {selectedTaxonomyForTraining.key.toUpperCase()}_1, {selectedTaxonomyForTraining.key.toUpperCase()}_2)
-                </p>
-                
-                {/* Validation Results */}
-                {trainingValidationResult && (
-                  <div className={`mt-3 p-4 rounded-lg text-sm ${
-                    trainingValidationResult.ok
-                      ? 'bg-green-50 text-green-800 border border-green-200'
-                      : 'bg-red-50 text-red-800 border border-red-200'
-                  }`}>
-                    <div className="flex items-start gap-2">
-                      <span className="text-lg flex-shrink-0">
-                        {trainingValidationResult.ok ? '✅' : '⚠️'}
-                      </span>
-                      <div className="flex-1">
-                        <p className="font-medium mb-1">
-                          {trainingValidationResult.ok ? 'Validation Passed' : 'Validation Failed'}
-                        </p>
-                        {trainingValidationResult.ok ? (
-                          <p>{trainingValidationResult.message || `File is valid! Found ${trainingValidationResult.recordCount || 0} records.`}</p>
-                        ) : (
-                          <div className="break-words whitespace-pre-wrap text-sm max-h-60 overflow-y-auto">
-                            {trainingValidationResult.error && (
-                              <p className="mb-2">{trainingValidationResult.error}</p>
-                            )}
-                            {trainingValidationResult.errors && trainingValidationResult.errors.length > 0 && (
-                              <div className="mt-2">
-                                <p className="font-medium mb-1">Errors:</p>
-                                <ul className="list-disc list-inside space-y-1">
-                                  {trainingValidationResult.errors.slice(0, 20).map((err, idx) => (
-                                    <li key={idx}>Row {err.row}: {err.message}</li>
-                                  ))}
-                                  {trainingValidationResult.errors.length > 20 && (
-                                    <li className="text-gray-600">... and {trainingValidationResult.errors.length - 20} more errors</li>
-                                  )}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Upload Results */}
-                {trainingUploadResult && (
-                  <div className={`mt-3 p-4 rounded-lg text-sm ${
-                    trainingUploadResult.ok
-                      ? 'bg-green-50 text-green-800 border border-green-200'
-                      : 'bg-red-50 text-red-800 border border-red-200'
-                  }`}>
-                    <div className="flex items-start gap-2">
-                      <span className="text-lg flex-shrink-0">
-                        {trainingUploadResult.ok ? '✅' : '⚠️'}
-                      </span>
-                      <div className="flex-1">
-                        <p className="font-medium mb-1">
-                          {trainingUploadResult.ok ? 'Training Job Started' : 'Upload Failed'}
-                        </p>
-                        {trainingUploadResult.ok ? (
-                          <p>Training job started successfully with {trainingUploadResult.recordCount} records. The job will be processed in the queue.</p>
-                        ) : (
-                          <p>{trainingUploadResult.error}</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="sticky bottom-0 bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-200">
-              <button
-                onClick={() => {
-                  setExternalTrainingModalOpen(false)
-                  setTrainingFile(null)
-                  setTrainingValidationResult(null)
-                  setTrainingUploadResult(null)
-                }}
-                disabled={uploadingTraining}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={uploadAndStartTraining}
-                disabled={
-                  uploadingTraining || 
-                  !trainingFile || 
-                  !trainingValidationResult?.ok ||
-                  !!trainingUploadResult?.ok
-                }
-                className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {uploadingTraining ? 'Starting...' : 'Start Training'}
               </button>
             </div>
           </div>

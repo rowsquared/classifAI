@@ -47,6 +47,7 @@ model User {
   editedSentences      Sentence[]              @relation("LastEditor")
   assignedSentences    SentenceAssignment[]
   aiLabelingJobs       AILabelingJob[]
+  aiLearningJobs       AILearningJob[]        @relation("LearningJobsUser")
   externalTrainingJobs AIExternalTrainingJob[] @relation("ExternalTrainingJobs")
 }
 
@@ -76,6 +77,7 @@ model Taxonomy {
   settings             TaxonomySetting?
   aiSuggestions        SentenceAISuggestion[]
   aiLabelingJobs       AILabelingJob[]
+  aiLearningJobs       AILearningJob[]        @relation("LearningJobs")
   externalTrainingJobs AIExternalTrainingJob[] @relation("ExternalTrainingJobs")
 }
 
@@ -251,14 +253,39 @@ model AILabelingJob {
   totalSentences     Int
   processedSentences Int                 @default(0)
   failedSentences    Int                 @default(0)
-  batchSize          Int                 @default(100)
+  batchSize          Int                 @default(1000)
   filterCriteria     Json?
+  externalJobId      String?
   startedAt          DateTime            @default(now())
   completedAt        DateTime?
   errorMessage       String?
 
   createdBy User     @relation(fields: [createdById], references: [id])
   taxonomy  Taxonomy @relation(fields: [taxonomyId], references: [id])
+
+  @@index([status])
+  @@index([createdById])
+  @@index([taxonomyId])
+  @@index([startedAt])
+}
+
+model AILearningJob {
+  id                 String              @id @default(cuid())
+  createdById        String
+  taxonomyId         String
+  status             AILabelingJobStatus @default(pending)
+  totalSentences     Int
+  processedSentences Int                 @default(0)
+  failedSentences    Int                 @default(0)
+  batchSize          Int                 @default(100)
+  filterCriteria     Json?
+  externalJobId      String?
+  startedAt          DateTime            @default(now())
+  completedAt        DateTime?
+  errorMessage       String?
+
+  createdBy User     @relation("LearningJobsUser", fields: [createdById], references: [id])
+  taxonomy  Taxonomy @relation("LearningJobs", fields: [taxonomyId], references: [id])
 
   @@index([status])
   @@index([createdById])

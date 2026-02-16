@@ -20,7 +20,7 @@ export const isUnknownNodeCode = (code: string | null | undefined): boolean => {
   if (code === null || code === undefined) return false
   return UNKNOWN_NODE_CODE_SET.has(code)
 }
-export const AI_LABELING_BATCH_SIZE = parseInt(process.env.AI_LABELING_BATCH_SIZE || '100', 10)
+export const AI_LABELING_BATCH_SIZE = parseInt(process.env.AI_LABELING_BATCH_SIZE || '1000', 10)
 export const AI_LEARNING_BATCH_SIZE = parseInt(process.env.AI_LEARNING_BATCH_SIZE || '100', 10)
 export const AI_LEARNING_MIN_NEW_ANNOTATIONS = parseInt(process.env.AI_LEARNING_MIN_NEW_ANNOTATIONS || '500', 10)
 export const AI_JOB_POLL_INTERVAL_MS = parseInt(process.env.AI_JOB_POLL_INTERVAL_MS || '60000', 10)
