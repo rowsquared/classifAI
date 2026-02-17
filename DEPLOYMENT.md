@@ -67,6 +67,7 @@ Optional AI labeling (Taxomind service):
 - AI_LEARNING_MIN_NEW_ANNOTATIONS
 - AI_JOB_POLL_INTERVAL_MS
 - AI_JOB_POLL_TIMEOUT_MS
+- AI_SOURCE_SLUG — scopes taxonomy keys per deployment. Set to the subdomain-domain of your app host (strip `www` and the final TLD, join with `-`). Example: `https://classiflow.app.rowsquared.org` → `classiflow-app-rowsquared`. If empty, the AI API infers it from the request host.
 
 See `ENV_SETUP.md` for details.
 

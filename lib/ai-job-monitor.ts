@@ -9,7 +9,7 @@
 
 import { prisma } from '@/lib/prisma'
 import { startAIJob, fetchAIJobStatus } from './ai-labeling'
-import { AI_JOB_POLL_INTERVAL_MS, AI_JOB_POLL_TIMEOUT_MS } from './constants'
+import { AI_JOB_POLL_INTERVAL_MS, AI_JOB_POLL_TIMEOUT_MS, AI_SOURCE_SLUG } from './constants'
 import { buildFieldMap } from './ai-utils'
 
 // ---------------------------------------------------------------------------
@@ -105,6 +105,7 @@ export function launchJob(jobId: string) {
 
     const externalJobId = await startAIJob('/label', {
       taxonomyKey: job.taxonomy.key,
+      ...(AI_SOURCE_SLUG ? { sourceSlug: AI_SOURCE_SLUG } : {}),
       batchId: job.id,
       sentences: payloadSentences
     })
@@ -179,6 +180,7 @@ export function launchLearningJob(jobId: string) {
 
     const externalJobId = await startAIJob('/learn', {
       taxonomyKey: job.taxonomy.key,
+      ...(AI_SOURCE_SLUG ? { sourceSlug: AI_SOURCE_SLUG } : {}),
       sentences: sentencesPayload
     })
 

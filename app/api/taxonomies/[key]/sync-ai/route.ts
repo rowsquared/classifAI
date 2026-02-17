@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { startAIJob, monitorAIJob } from '@/lib/ai-labeling'
+import { AI_SOURCE_SLUG } from '@/lib/constants'
 
 export async function POST(
   req: NextRequest,
@@ -60,6 +61,7 @@ export async function POST(
 
     const payload = {
       action: 'create',
+      ...(AI_SOURCE_SLUG ? { sourceSlug: AI_SOURCE_SLUG } : {}),
       taxonomy: {
         key: taxonomy.key,
         description: taxonomy.description ?? '',

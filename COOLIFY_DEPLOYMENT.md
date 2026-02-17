@@ -63,6 +63,11 @@ AI_LEARNING_BATCH_SIZE=100
 AI_LEARNING_MIN_NEW_ANNOTATIONS=500
 AI_JOB_POLL_INTERVAL_MS=5000
 AI_JOB_POLL_TIMEOUT_MS=600000
+
+# Source slug for AI API (scopes taxonomy keys per deployment)
+# Set to the subdomain-domain of your app host (strip www and TLD).
+# Example: if your app is at https://classiflow.app.rowsquared.org → classiflow-app-rowsquared
+AI_SOURCE_SLUG=classiflow-app-rowsquared
 ```
 
 ### 3. Generate NEXTAUTH_SECRET
