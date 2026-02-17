@@ -89,6 +89,18 @@ export async function fetchAIJobStatus(statusPath: string): Promise<AIJobStatusR
   return requestAI<AIJobStatusResponse>(statusPath, { method: 'GET' })
 }
 
+/**
+ * Cancel a running job on the external AI API.
+ * Best-effort: failures are logged but not thrown.
+ */
+export async function cancelAIJob(apiPath: string, externalJobId: string): Promise<void> {
+  try {
+    await requestAI(`${apiPath}/${externalJobId}/cancel`, { method: 'POST' })
+  } catch (error) {
+    console.warn(`[ai] Failed to cancel external job ${externalJobId}:`, error)
+  }
+}
+
 export async function waitForAIJobResult(jobId: string, statusPath: string): Promise<AIJobResult> {
   const startedAt = Date.now()
   while (true) {

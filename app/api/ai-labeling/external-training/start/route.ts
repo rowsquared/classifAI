@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { startAIJob, monitorAIJob } from '@/lib/ai-labeling'
+import { AI_SOURCE_SLUG } from '@/lib/constants'
 import { z } from 'zod'
 
 async function processNextQueuedJob() {
@@ -33,6 +34,7 @@ async function processNextQueuedJob() {
     try {
       const externalJobId = await startAIJob('/learn', {
         taxonomyKey: job.taxonomy.key,
+        ...(AI_SOURCE_SLUG ? { sourceSlug: AI_SOURCE_SLUG } : {}),
         trainingDataUrl: job.trainingDataUrl,
         externalTraining: true
       })
@@ -130,6 +132,7 @@ export async function POST(req: NextRequest) {
         // Start the AI job with the external tool
         const externalJobId = await startAIJob('/learn', {
           taxonomyKey: taxonomy.key,
+          ...(AI_SOURCE_SLUG ? { sourceSlug: AI_SOURCE_SLUG } : {}),
           trainingDataUrl,
           externalTraining: true
         })

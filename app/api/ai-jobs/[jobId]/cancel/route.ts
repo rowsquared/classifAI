@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { cancelAIJob } from '@/lib/ai-labeling'
 
 export async function POST(
   req: NextRequest,
@@ -20,7 +21,7 @@ export async function POST(
     if (type === 'labeling') {
       const job = await prisma.aILabelingJob.findUnique({
         where: { id: jobId },
-        select: { status: true, startedAt: true }
+        select: { status: true, startedAt: true, externalJobId: true }
       })
 
       if (!job) {
@@ -29,6 +30,10 @@ export async function POST(
 
       if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
         return NextResponse.json({ ok: true, status: job.status })
+      }
+
+      if (job.externalJobId) {
+        cancelAIJob('/label', job.externalJobId)
       }
 
       // For stuck jobs (processing for > 1 hour), mark as failed instead of cancelled
@@ -40,7 +45,7 @@ export async function POST(
         data: {
           status: isStuck ? 'failed' : 'cancelled',
           completedAt: new Date(),
-          errorMessage: isStuck 
+          errorMessage: isStuck
             ? 'Job was stuck in processing state and has been cancelled'
             : 'Cancelled by user'
         }
@@ -52,7 +57,7 @@ export async function POST(
     if (type === 'external_training') {
       const job = await prisma.aIExternalTrainingJob.findUnique({
         where: { id: jobId },
-        select: { status: true }
+        select: { status: true, externalJobId: true }
       })
 
       if (!job) {
@@ -61,6 +66,10 @@ export async function POST(
 
       if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
         return NextResponse.json({ ok: true, status: job.status })
+      }
+
+      if (job.externalJobId) {
+        cancelAIJob('/learn', job.externalJobId)
       }
 
       await prisma.aIExternalTrainingJob.update({
@@ -77,7 +86,7 @@ export async function POST(
     if (type === 'learning') {
       const job = await prisma.aILearningJob.findUnique({
         where: { id: jobId },
-        select: { status: true, startedAt: true }
+        select: { status: true, startedAt: true, externalJobId: true }
       })
 
       if (!job) {
@@ -86,6 +95,10 @@ export async function POST(
 
       if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
         return NextResponse.json({ ok: true, status: job.status })
+      }
+
+      if (job.externalJobId) {
+        cancelAIJob('/learn', job.externalJobId)
       }
 
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
@@ -118,6 +131,9 @@ export async function POST(
       if (!taxonomy) {
         return NextResponse.json({ error: 'Job not found or already completed' }, { status: 404 })
       }
+
+      // jobId here is the external AI job ID (stored in lastAISyncJobId)
+      cancelAIJob('/taxonomies', jobId)
 
       await prisma.taxonomy.update({
         where: { id: taxonomy.id },

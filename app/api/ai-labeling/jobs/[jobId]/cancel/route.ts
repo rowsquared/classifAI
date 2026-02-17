@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { cancelAIJob } from '@/lib/ai-labeling'
 
 export async function POST(
   req: NextRequest,
@@ -15,7 +16,7 @@ export async function POST(
     const { jobId } = await params
     const job = await prisma.aILabelingJob.findUnique({
       where: { id: jobId },
-      select: { status: true }
+      select: { status: true, externalJobId: true }
     })
 
     if (!job) {
@@ -24,6 +25,10 @@ export async function POST(
 
     if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
       return NextResponse.json({ ok: true, status: job.status })
+    }
+
+    if (job.externalJobId) {
+      cancelAIJob('/label', job.externalJobId)
     }
 
     await prisma.aILabelingJob.update({

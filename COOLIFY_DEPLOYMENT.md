@@ -146,6 +146,10 @@ The default admin user is **automatically created** on first deployment using th
 - If the provider uses a prefix (e.g., `/api`), include it in `AI_LABELING_API_URL` (e.g., `https://taxomind-api.rowsquared.org/api`).
 - Verify with `curl -i "$AI_LABELING_API_URL/learn"`; a 200/401/403 indicates you hit the right service, a 404 means the base path is wrong.
 
+### AI job cancel behavior
+- When you cancel a job from the UI, the app cancels it both locally (in the database) and on the external Taxomind API (`POST /{endpoint}/{jobId}/cancel`).
+- The external cancel is best-effort — if it fails (e.g. network issue), the local cancellation still proceeds and the polling loop stops.
+
 ---
 
 ## Method 2: Dockerfile Deployment (Separate Database)

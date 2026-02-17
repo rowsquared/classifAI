@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { parse } from 'csv-parse/sync'
 import { Prisma } from '@prisma/client'
-import { isUnknownNodeCode } from '@/lib/constants'
+import { isUnknownNodeCode, AI_SOURCE_SLUG } from '@/lib/constants'
 import { startAIJob, monitorAIJob } from '@/lib/ai-labeling'
 
 export async function PUT(
@@ -323,6 +323,7 @@ export async function DELETE(
       const { startAIJob } = await import('@/lib/ai-labeling')
       await startAIJob('/taxonomies', {
         action: 'delete',
+        ...(AI_SOURCE_SLUG ? { sourceSlug: AI_SOURCE_SLUG } : {}),
         taxonomy: {
           key: taxonomyKey
         }
